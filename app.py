@@ -18,6 +18,8 @@ music_files = {
     "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/2.wav",
     "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/3.wav"
 }
+rdp_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
+
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
@@ -33,6 +35,42 @@ CHARACTERISTIC_UUID = "2A19"
 
 # 儲存所有設備的資料
 device_data = {uuid: {} for uuid in ESP32_DEVICES}
+
+def play_audio_once(file_path):
+    """在一個單獨的線程中播放音訊檔案一次"""
+    global stop_current_audio_flag
+    
+    wf = wave.open(file_path, 'rb')
+    p = pyaudio.PyAudio()
+    
+    # 獲取音訊格式資訊
+    format = p.get_format_from_width(wf.getsampwidth())
+    channels = wf.getnchannels()
+    rate = wf.getframerate()
+    
+    # 開啟音訊流
+    stream = p.open(format=format,
+                    channels=channels,
+                    rate=rate,
+                    output=True)
+    
+    # 設定資料塊大小
+    chunk = 1024
+    
+    stop_current_audio_flag = False
+    
+    # 播放一次
+    data = wf.readframes(chunk)
+    while len(data) > 0 and not stop_current_audio_flag:
+        stream.write(data)
+        data = wf.readframes(chunk)
+    
+    # 關閉資源
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+    wf.close()
+    print("單次音訊播放完成")
 
 def stop_current_audio():
     """停止目前正在播放的音訊"""
@@ -136,8 +174,11 @@ def play_music(file_path, loop=True):
         current_audio_thread.start()
         print(f"開始循環播放: {file_path}")
     else:
-        # 單次播放邏輯 (如需要)
-        pass        
+        # 單次播放邏輯
+        current_audio_thread = threading.Thread(target=play_audio_once, args=(file_path,))
+        current_audio_thread.daemon = True
+        current_audio_thread.start()
+        print(f"開始單次播放: {file_path}")        
 
 def display_image(image_data):
     # 實現影像顯示邏輯
@@ -170,6 +211,13 @@ def process_data(device_name, data):
         # 處理輪子觸發控制器資料
         command = data.decode('utf-8')
         print(f"輪子觸發控制器: 收到命令 {command}")
+        
+        if command == "WHEEL_TRIGGER":
+            print("RDP 按鈕已觸發，播放音效")
+            # 停止當前播放的任何音訊
+            stop_current_audio()
+            # 單次播放 RDP 音效
+            play_music(rdp_audio_file, loop=False)
         
     elif device_name == "ESP32_MusicSensor_BLE":
     # 處理歌單控制器資料
