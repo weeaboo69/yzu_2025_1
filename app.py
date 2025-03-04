@@ -5,21 +5,25 @@ import pyaudio
 import cv2
 import time
 import wave
+import threading
 import pyaudio
-global audio_stream
+
+current_audio_thread = None
+stop_current_audio_flag = False
 current_playing_music = None  # 目前正在播放的音樂編號
+audio_stream = None  # 用於儲存音訊流的全局變數
+
 music_files = {
     "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/1.wav",
     "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/2.wav",
     "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/3.wav"
 }
-audio_stream = None  # 用於儲存音訊流的全局變數
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    "ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    #"ESP32_HornBLE",           # 喇叭控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
@@ -66,6 +70,75 @@ def play_music(file_path, loop=False):
     except Exception as e:
         print(f"播放音樂時發生錯誤: {e}")
 
+def play_audio_loop(file_path):
+    """在一個單獨的線程中循環播放音訊檔案"""
+    global stop_current_audio_flag
+    
+    wf = wave.open(file_path, 'rb')
+    p = pyaudio.PyAudio()
+    
+    # 獲取音訊格式資訊
+    format = p.get_format_from_width(wf.getsampwidth())
+    channels = wf.getnchannels()
+    rate = wf.getframerate()
+    
+    # 開啟音訊流
+    stream = p.open(format=format,
+                    channels=channels,
+                    rate=rate,
+                    output=True)
+    
+    # 設定資料塊大小
+    chunk = 1024
+    
+    stop_current_audio_flag = False
+    
+    # 循環播放
+    while not stop_current_audio_flag:
+        # 將文件指標重置到開頭
+        wf.rewind()
+        
+        # 讀取並播放整個檔案
+        data = wf.readframes(chunk)
+        while len(data) > 0 and not stop_current_audio_flag:
+            stream.write(data)
+            data = wf.readframes(chunk)
+    
+    # 關閉資源
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+    wf.close()
+    print("音訊播放停止")
+
+def stop_current_audio():
+    """停止目前正在播放的音訊"""
+    global current_audio_thread, stop_current_audio_flag
+    
+    if current_audio_thread and current_audio_thread.is_alive():
+        stop_current_audio_flag = True
+        current_audio_thread.join(timeout=1.0)  # 等待線程結束，最多1秒
+        print("已停止先前的音訊播放")
+    
+    stop_current_audio_flag = False
+
+def play_music(file_path, loop=True):
+    """開始播放指定的音樂檔案"""
+    global current_audio_thread
+    
+    # 先停止當前播放
+    stop_current_audio()
+    
+    if loop:
+        # 啟動新的播放線程
+        current_audio_thread = threading.Thread(target=play_audio_loop, args=(file_path,))
+        current_audio_thread.daemon = True  # 設為守護線程，主程式結束時會自動結束
+        current_audio_thread.start()
+        print(f"開始循環播放: {file_path}")
+    else:
+        # 單次播放邏輯 (如需要)
+        pass        
+
 def display_image(image_data):
     # 實現影像顯示邏輯
     pass
@@ -99,27 +172,22 @@ def process_data(device_name, data):
         print(f"輪子觸發控制器: 收到命令 {command}")
         
     elif device_name == "ESP32_MusicSensor_BLE":
-        # 處理歌單控制器資料
+    # 處理歌單控制器資料
         command = data.decode('utf-8')
         print(f"歌單控制器: 收到命令 {command}")
-    
-    # 根據命令選擇並播放對應的音樂
-    if command == "SELECT_MUSIC_1":
-        stop_current_audio()  # 停止目前正在播放的音樂
-        current_playing_music = "1"
-        play_music(music_files["1"], loop=True)  # 循環播放音樂 1
-    
-    elif command == "SELECT_MUSIC_2":
-        stop_current_audio()
-        current_playing_music = "2"
-        play_music(music_files["2"], loop=True)  # 循環播放音樂 2
-    
-    elif command == "SELECT_MUSIC_3":
-        stop_current_audio()
-        current_playing_music = "3"
-        play_music(music_files["3"], loop=True)  # 循環播放音樂 3
         
-    # 根據需要觸發相應的音訊或視覺效果
+        # 根據命令選擇並播放對應的音樂
+        if command == "SELECT_MUSIC_1":
+            print("切換到音樂1")
+            play_music(music_files["1"], loop=True)
+        
+        elif command == "SELECT_MUSIC_2":
+            print("切換到音樂2")
+            play_music(music_files["2"], loop=True)
+        
+        elif command == "SELECT_MUSIC_3":
+            print("切換到音樂3")
+            play_music(music_files["3"], loop=True)
 
 def parse_data(data):
     # 將從ESP32收到的原始資料解析為結構化資料
