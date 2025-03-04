@@ -12,6 +12,7 @@ current_audio_thread = None
 stop_current_audio_flag = False
 current_playing_music = None  # 目前正在播放的音樂編號
 audio_stream = None  # 用於儲存音訊流的全局變數
+loaded_audio_data = {}
 
 music_files = {
     "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/1.wav",
@@ -25,8 +26,8 @@ rdp_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
 ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
     #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    #"ESP32_RDP_BLE",           # 輪子觸發控制器
-    "ESP32_MusicSensor_BLE"    # 歌單控制器
+    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    #"ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
 # 特性UUID (需要與ESP32端匹配)
@@ -36,40 +37,122 @@ CHARACTERISTIC_UUID = "2A19"
 # 儲存所有設備的資料
 device_data = {uuid: {} for uuid in ESP32_DEVICES}
 
-def play_audio_once(file_path):
-    """在一個單獨的線程中播放音訊檔案一次"""
+def preload_audio_files():
+    """預先加載所有音效檔案到記憶體中"""
+    global loaded_audio_data
+    
+    print("預加載音效檔案...")
+    
+    # 加載音樂檔案
+    for key, file_path in music_files.items():
+        try:
+            wf = wave.open(file_path, 'rb')
+            audio_data = {
+                'format': wf.getsampwidth(),
+                'channels': wf.getnchannels(),
+                'rate': wf.getframerate(),
+                'frames': wf.readframes(wf.getnframes())  # 讀取整個檔案
+            }
+            loaded_audio_data[file_path] = audio_data
+            wf.close()
+            print(f"已加載: {file_path}")
+        except Exception as e:
+            print(f"加載 {file_path} 時發生錯誤: {e}")
+    
+    # 加載 RDP 音效
+    try:
+        wf = wave.open(rdp_audio_file, 'rb')
+        audio_data = {
+            'format': wf.getsampwidth(),
+            'channels': wf.getnchannels(),
+            'rate': wf.getframerate(),
+            'frames': wf.readframes(wf.getnframes())
+        }
+        loaded_audio_data[rdp_audio_file] = audio_data
+        wf.close()
+        print(f"已加載: {rdp_audio_file}")
+    except Exception as e:
+        print(f"加載 {rdp_audio_file} 時發生錯誤: {e}")
+
+def play_audio_loop(file_path):
+    """使用預加載的資料循環播放音訊"""
     global stop_current_audio_flag
     
-    wf = wave.open(file_path, 'rb')
+    if file_path not in loaded_audio_data:
+        print(f"錯誤: 找不到預加載的音效檔案 {file_path}")
+        return
+    
+    audio_data = loaded_audio_data[file_path]
     p = pyaudio.PyAudio()
     
-    # 獲取音訊格式資訊
-    format = p.get_format_from_width(wf.getsampwidth())
-    channels = wf.getnchannels()
-    rate = wf.getframerate()
-    
     # 開啟音訊流
-    stream = p.open(format=format,
-                    channels=channels,
-                    rate=rate,
+    stream = p.open(format=p.get_format_from_width(audio_data['format']),
+                    channels=audio_data['channels'],
+                    rate=audio_data['rate'],
                     output=True)
     
-    # 設定資料塊大小
-    chunk = 1024
+    # 設定較小的資料塊大小以減少延遲
+    chunk = 512
+    
+    # 將二進制資料轉換為可讀取的位置
+    frames = audio_data['frames']
+    frame_count = len(frames) // (audio_data['format'] * audio_data['channels'])
     
     stop_current_audio_flag = False
     
-    # 播放一次
-    data = wf.readframes(chunk)
-    while len(data) > 0 and not stop_current_audio_flag:
-        stream.write(data)
-        data = wf.readframes(chunk)
+    # 循環播放
+    while not stop_current_audio_flag:
+        # 分段播放整個檔案
+        for i in range(0, len(frames), chunk * audio_data['format'] * audio_data['channels']):
+            if stop_current_audio_flag:
+                break
+            chunk_data = frames[i:i + chunk * audio_data['format'] * audio_data['channels']]
+            if len(chunk_data) > 0:
+                stream.write(chunk_data)
     
     # 關閉資源
     stream.stop_stream()
     stream.close()
     p.terminate()
-    wf.close()
+    print("音訊播放停止")
+
+def play_audio_once(file_path):
+    """使用預加載的資料播放音訊一次"""
+    global stop_current_audio_flag
+    
+    if file_path not in loaded_audio_data:
+        print(f"錯誤: 找不到預加載的音效檔案 {file_path}")
+        return
+    
+    audio_data = loaded_audio_data[file_path]
+    p = pyaudio.PyAudio()
+    
+    # 開啟音訊流
+    stream = p.open(format=p.get_format_from_width(audio_data['format']),
+                    channels=audio_data['channels'],
+                    rate=audio_data['rate'],
+                    output=True)
+    
+    # 設定較小的資料塊大小以減少延遲
+    chunk = 512
+    
+    # 將二進制資料轉換為可讀取的位置
+    frames = audio_data['frames']
+    
+    stop_current_audio_flag = False
+    
+    # 分段播放整個檔案
+    for i in range(0, len(frames), chunk * audio_data['format'] * audio_data['channels']):
+        if stop_current_audio_flag:
+            break
+        chunk_data = frames[i:i + chunk * audio_data['format'] * audio_data['channels']]
+        if len(chunk_data) > 0:
+            stream.write(chunk_data)
+    
+    # 關閉資源
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
     print("單次音訊播放完成")
 
 def stop_current_audio():
@@ -107,47 +190,6 @@ def play_music(file_path, loop=False):
         
     except Exception as e:
         print(f"播放音樂時發生錯誤: {e}")
-
-def play_audio_loop(file_path):
-    """在一個單獨的線程中循環播放音訊檔案"""
-    global stop_current_audio_flag
-    
-    wf = wave.open(file_path, 'rb')
-    p = pyaudio.PyAudio()
-    
-    # 獲取音訊格式資訊
-    format = p.get_format_from_width(wf.getsampwidth())
-    channels = wf.getnchannels()
-    rate = wf.getframerate()
-    
-    # 開啟音訊流
-    stream = p.open(format=format,
-                    channels=channels,
-                    rate=rate,
-                    output=True)
-    
-    # 設定資料塊大小
-    chunk = 1024
-    
-    stop_current_audio_flag = False
-    
-    # 循環播放
-    while not stop_current_audio_flag:
-        # 將文件指標重置到開頭
-        wf.rewind()
-        
-        # 讀取並播放整個檔案
-        data = wf.readframes(chunk)
-        while len(data) > 0 and not stop_current_audio_flag:
-            stream.write(data)
-            data = wf.readframes(chunk)
-    
-    # 關閉資源
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-    wf.close()
-    print("音訊播放停止")
 
 def stop_current_audio():
     """停止目前正在播放的音訊"""
@@ -270,6 +312,7 @@ async def connect_to_device(device_name):
 
 # 主函數
 async def main():
+    preload_audio_files()
     # 連接到所有ESP32設備
     clients = []
     for device_name in ESP32_DEVICES:
