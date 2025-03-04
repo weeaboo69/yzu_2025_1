@@ -166,19 +166,24 @@ void loop() {
   unsigned long currentTime = millis();
   
   // 檢查是否超過三秒沒有觸發
-  if (isPlaying && (currentTime - lastActivityTime > INACTIVITY_TIMEOUT)) {
-    if (deviceConnected) {
-      // 發送停止播放的指令
-      const char* stopCmd = "STOP_PLAYBACK";
-      pCharacteristic->setValue((uint8_t*)stopCmd, strlen(stopCmd));
-      pCharacteristic->notify();
-      Serial.println("超過三秒沒有觸發，發送停止播放指令");
-      isPlaying = false;  // 更新播放狀態
-    }
-  } else if (!isPlaying && (currentTime - lastActivityTime <= INACTIVITY_TIMEOUT)) {
-    // 如果之前停止播放，但現在有活動，則重新設置為播放狀態
-    isPlaying = true;
+if (isPlaying && (currentTime - lastActivityTime > INACTIVITY_TIMEOUT)) {
+  if (deviceConnected) {
+    // 發送停止播放的指令
+    const char* stopCmd = "STOP_PLAYBACK";
+    pCharacteristic->setValue((uint8_t*)stopCmd, strlen(stopCmd));
+    pCharacteristic->notify();
+    Serial.println("超過三秒沒有觸發，發送停止播放指令");
+    isPlaying = false;  // 更新播放狀態
+    
+    // 重置速度為初始值 1.0
+    previousInterval = 0;
+    musicSpeed = 1.0;
+    Serial.println("播放速度已重置為 1.0");
   }
+} else if (!isPlaying && (currentTime - lastActivityTime <= INACTIVITY_TIMEOUT)) {
+  // 如果之前停止播放，但現在有活動，則重新設置為播放狀態
+  isPlaying = true;
+}
   
   // 定期透過 BLE 發送速度值
   if (deviceConnected && currentTime - lastSendTime >= SEND_INTERVAL) {
