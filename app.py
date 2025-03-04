@@ -4,6 +4,16 @@ from bleak import BleakClient, BleakScanner
 import pyaudio
 import cv2
 import time
+import wave
+import pyaudio
+global audio_stream
+current_playing_music = None  # 目前正在播放的音樂編號
+music_files = {
+    "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/1.wav",
+    "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/2.wav",
+    "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/3.wav"
+}
+audio_stream = None  # 用於儲存音訊流的全局變數
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
@@ -20,10 +30,41 @@ CHARACTERISTIC_UUID = "2A19"
 # 儲存所有設備的資料
 device_data = {uuid: {} for uuid in ESP32_DEVICES}
 
-# 音訊和影像播放函數
-def play_audio(audio_data):
-    # 實現音訊播放邏輯
-    pass
+def stop_current_audio():
+    """停止目前正在播放的音訊"""
+    global audio_stream
+    if audio_stream:
+        audio_stream.stop_stream()
+        audio_stream.close()
+        audio_stream = None
+        print("停止播放音樂")
+
+def play_music(file_path, loop=False):
+    """播放指定的音樂檔案"""
+    
+    try:
+        wf = wave.open(file_path, 'rb')
+        p = pyaudio.PyAudio()
+        
+        def callback(in_data, frame_count, time_info, status):
+            data = wf.readframes(frame_count)
+            if len(data) < frame_count * 2 and loop:
+                # 如果檔案結束且需要循環播放，就重新開始
+                wf.rewind()
+                data += wf.readframes(frame_count - len(data)//2)
+            return (data, pyaudio.paContinue)
+        
+        audio_stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+                           channels=wf.getnchannels(),
+                           rate=wf.getframerate(),
+                           output=True,
+                           stream_callback=callback)
+        
+        audio_stream.start_stream()
+        print(f"開始播放音樂: {file_path}")
+        
+    except Exception as e:
+        print(f"播放音樂時發生錯誤: {e}")
 
 def display_image(image_data):
     # 實現影像顯示邏輯
@@ -61,6 +102,22 @@ def process_data(device_name, data):
         # 處理歌單控制器資料
         command = data.decode('utf-8')
         print(f"歌單控制器: 收到命令 {command}")
+    
+    # 根據命令選擇並播放對應的音樂
+    if command == "SELECT_MUSIC_1":
+        stop_current_audio()  # 停止目前正在播放的音樂
+        current_playing_music = "1"
+        play_music(music_files["1"], loop=True)  # 循環播放音樂 1
+    
+    elif command == "SELECT_MUSIC_2":
+        stop_current_audio()
+        current_playing_music = "2"
+        play_music(music_files["2"], loop=True)  # 循環播放音樂 2
+    
+    elif command == "SELECT_MUSIC_3":
+        stop_current_audio()
+        current_playing_music = "3"
+        play_music(music_files["3"], loop=True)  # 循環播放音樂 3
         
     # 根據需要觸發相應的音訊或視覺效果
 
