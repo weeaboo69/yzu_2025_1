@@ -8,17 +8,19 @@
 #define CHARACTERISTIC_UUID "2A19" // 使用標準的電池等級特性 UUID
 
 // 感應器腳位及閾值定義
+int zxw = 0;
 const int SENSOR_PIN = 34;
 const int SENSOR_PIN_2 = 35;
 const int TOTAL_MAX = 8100;     // 總值未按壓時的最大值
-const int TOTAL_MIN = 7700;     // 總值最大按壓時的最小值
-const int BEND_THRESHOLD = 7900;  // 彎曲閾值，低於此值視為彎曲
-const int BEND_THRESHOLD2= 8000;
+const int TOTAL_MIN = 7600;     // 總值最大按壓時的最小值
+const int BEND_THRESHOLD = 7800;  // 彎曲閾值，低於此值視為彎曲
+const int BEND_THRESHOLD2= 8100;
 const int SEND_INTERVAL = 50;     // 藍牙發送間隔 (毫秒)
 const int MONITOR_INTERVAL = 500; // 監測數值間隔 (毫秒)
 
 const uint8_t CMD_START_BEND = 254;  // 開始彎曲命令
 const uint8_t CMD_END_BEND = 253;    // 結束彎曲命令
+unsigned long lastBendStartTime = 0;  // 記錄上次彎曲開始的時間
 
 unsigned long lastSendTime = 0;
 unsigned long lastMonitorTime = 0;
@@ -107,12 +109,13 @@ void loop() {
   
   // 檢測彎曲狀態變化 (低於閾值表示按壓/彎曲)
   bool currentlyBent = (totalValue < BEND_THRESHOLD);
-  bool currentlyBent2 = (totalValue > BEND_THRESHOLD2);
+  bool currentlyBent2 = (totalValue == BEND_THRESHOLD2);
   
   // 如果從未彎曲變為彎曲
   if (currentlyBent && !isBent) {
   isBent = true;
   hornPlayed = false;  // 重置播放標記
+  lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
   Serial.println("偵測到彎曲開始");
   
   // 發送彎曲開始訊號
@@ -121,10 +124,11 @@ void loop() {
     pCharacteristic->setValue(&startCommand, 1);
     pCharacteristic->notify();
     Serial.println("發送彎曲開始命令");
+    zxw++;
   }
 }
-// 如果從彎曲變為未彎曲
-else if (currentlyBent2 && isBent) {
+// 如果從彎曲變為未彎曲，且已經過了防抖動時間
+else if (currentlyBent2 && isBent && (currentTime - lastBendStartTime > 100)) {
   isBent = false;
   Serial.println("偵測到彎曲結束");
   
@@ -134,6 +138,7 @@ else if (currentlyBent2 && isBent) {
     pCharacteristic->setValue(&endCommand, 1);
     pCharacteristic->notify();
     Serial.println("發送彎曲結束命令");
+    Serial.println(zxw);
   }
 }
   
@@ -152,7 +157,7 @@ else if (currentlyBent2 && isBent) {
     else if (isBent && hornPlayed) {
       // 將彎曲值映射到 0-100 範圍作為音檔進度百分比
       // 注意：由於現在低值表示最大按壓，所以映射方向改變
-      int playbackPosition = map(totalValue, TOTAL_MAX, TOTAL_MIN, 0, 100);
+      int playbackPosition = map(totalValue, BEND_THRESHOLD2, TOTAL_MIN, 0, 100);
 playbackPosition = constrain(playbackPosition, 0, 100);
       //Serial.println(playbackPosition);
 
