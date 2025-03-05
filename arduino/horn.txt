@@ -17,6 +17,9 @@ const int BEND_THRESHOLD2= 8000;
 const int SEND_INTERVAL = 50;     // 藍牙發送間隔 (毫秒)
 const int MONITOR_INTERVAL = 500; // 監測數值間隔 (毫秒)
 
+const uint8_t CMD_START_BEND = 254;  // 開始彎曲命令
+const uint8_t CMD_END_BEND = 253;    // 結束彎曲命令
+
 unsigned long lastSendTime = 0;
 unsigned long lastMonitorTime = 0;
 
@@ -97,8 +100,8 @@ void loop() {
     Serial.println(sensorValue);
     Serial.print("感測器2: ");
     Serial.println(sensorValue2);
-    Serial.print("總值: ");
-    Serial.println(totalValue);
+    //Serial.print("總值: ");
+    //Serial.println(totalValue);
     lastMonitorTime = currentTime;
   }
   
@@ -108,15 +111,31 @@ void loop() {
   
   // 如果從未彎曲變為彎曲
   if (currentlyBent && !isBent) {
-    isBent = true;
-    hornPlayed = false;  // 重置播放標記
-    Serial.println("偵測到彎曲開始");
+  isBent = true;
+  hornPlayed = false;  // 重置播放標記
+  Serial.println("偵測到彎曲開始");
+  
+  // 發送彎曲開始訊號
+  if (deviceConnected) {
+    uint8_t startCommand = CMD_START_BEND;
+    pCharacteristic->setValue(&startCommand, 1);
+    pCharacteristic->notify();
+    Serial.println("發送彎曲開始命令");
   }
-  // 如果從彎曲變為未彎曲
-  else if (currentlyBent2 && isBent) {
-    isBent = false;
-    Serial.println("偵測到彎曲結束");
+}
+// 如果從彎曲變為未彎曲
+else if (currentlyBent2 && isBent) {
+  isBent = false;
+  Serial.println("偵測到彎曲結束");
+  
+  // 發送彎曲結束訊號
+  if (deviceConnected) {
+    uint8_t endCommand = CMD_END_BEND;
+    pCharacteristic->setValue(&endCommand, 1);
+    pCharacteristic->notify();
+    Serial.println("發送彎曲結束命令");
   }
+}
   
   // 有裝置連接時，發送數據
   if (deviceConnected && currentTime - lastSendTime >= SEND_INTERVAL) {
@@ -135,6 +154,8 @@ void loop() {
       // 注意：由於現在低值表示最大按壓，所以映射方向改變
       int playbackPosition = map(totalValue, TOTAL_MAX, TOTAL_MIN, 0, 100);
 playbackPosition = constrain(playbackPosition, 0, 100);
+      //Serial.println(playbackPosition);
+
 
 // 添加閾值判斷，當值非常小時(如小於2)，直接設為0
 if (playbackPosition < 2) {
@@ -145,6 +166,7 @@ if (playbackPosition < 2) {
       uint8_t positionValue = (uint8_t)playbackPosition;
       pCharacteristic->setValue(&positionValue, 1);
       pCharacteristic->notify();
+      Serial.println(positionValue);
     }
     
     lastSendTime = currentTime;
