@@ -24,9 +24,9 @@ rdp_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    #"ESP32_HornBLE",           # 喇叭控制器
+    "ESP32_HornBLE",           # 喇叭控制器
     #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    #"ESP32_RDP_BLE",           # 輪子觸發控制器
     #"ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 

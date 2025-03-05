@@ -11,15 +11,37 @@ import pyaudio
 import numpy as np
 from scipy import signal
 
-current_audio_thread = None
-stop_current_audio_flag = False
 current_playing_music = None  # 目前正在播放的音樂編號
-current_playback_speed = 1.0
+
+device_audio_threads = {
+    "ESP32_HornBLE": None,
+    "ESP32_Wheelspeed2_BLE": None,
+    "ESP32_RDP_BLE": None,
+    "ESP32_MusicSensor_BLE": None
+}
+
+device_stop_flags = {
+    "ESP32_HornBLE": False,
+    "ESP32_Wheelspeed2_BLE": False,
+    "ESP32_RDP_BLE": False,
+    "ESP32_MusicSensor_BLE": False
+}
+
+device_playback_speeds = {
+    "ESP32_HornBLE": 1.0,
+    "ESP32_Wheelspeed2_BLE": 1.0,
+    "ESP32_RDP_BLE": 1.0,
+    "ESP32_MusicSensor_BLE": 1.0
+}
+
+# 喇叭模式切換狀態
+horn_mode_switched = False
 audio_stream = None  # 用於儲存音訊流的全局變數
 loaded_audio_data = {}
-wheel_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound.wav"  # 請替換為實際的 wheel 音檔路徑
 
-current_playback_speed = 1.0  # 預設播放速度
+horn_audio_file_before = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_before.wav"  # 切換前的喇叭音效
+horn_audio_file_after = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_after.wav"   # 切換後的喇叭音效
+wheel_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound.wav"  
 music_files = {
     "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/1.wav",
     "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/2.wav",
@@ -29,8 +51,8 @@ rdp_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    #"ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    "ESP32_HornBLE",           # 喇叭控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
     #"ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
@@ -134,16 +156,44 @@ def preload_audio_files():
         print(f"已加載: {wheel_audio_file}")
     except Exception as e:
         print(f"加載 {wheel_audio_file} 時發生錯誤: {e}")
+    try:
+        wf = wave.open(horn_audio_file_before, 'rb')
+        audio_data = {
+            'format': wf.getsampwidth(),
+            'channels': wf.getnchannels(),
+            'rate': wf.getframerate(),
+            'frames': wf.readframes(wf.getnframes())
+        }
+        loaded_audio_data[horn_audio_file_before] = audio_data
+        wf.close()
+        print(f"已加載: {horn_audio_file_before}")
+    except Exception as e:
+        print(f"加載 {horn_audio_file_before} 時發生錯誤: {e}")
 
-def play_audio_loop(file_path, initial_speed=1.0):
+    # 加載切換後的喇叭音效
+    try:
+        wf = wave.open(horn_audio_file_after, 'rb')
+        audio_data = {
+            'format': wf.getsampwidth(),
+            'channels': wf.getnchannels(),
+            'rate': wf.getframerate(),
+            'frames': wf.readframes(wf.getnframes())
+        }
+        loaded_audio_data[horn_audio_file_after] = audio_data
+        wf.close()
+        print(f"已加載: {horn_audio_file_after}")
+    except Exception as e:
+        print(f"加載 {horn_audio_file_after} 時發生錯誤: {e}")
+
+def play_audio_loop(device_name, file_path, initial_speed=1.0):
     """使用預加載的資料循環播放音訊，支援速度控制"""
-    global stop_current_audio_flag, current_playback_speed
+    global device_stop_flags, device_playback_speeds
     
     if file_path not in loaded_audio_data:
         print(f"錯誤: 找不到預加載的音效檔案 {file_path}")
         return
     
-    current_playback_speed = initial_speed
+    device_playback_speeds[device_name] = initial_speed
     audio_data = loaded_audio_data[file_path]
     p = pyaudio.PyAudio()
     
@@ -151,13 +201,13 @@ def play_audio_loop(file_path, initial_speed=1.0):
     original_frames = audio_data['frames']
     original_rate = audio_data['rate']
     
-    stop_current_audio_flag = False
-    last_speed = current_playback_speed
+    device_stop_flags[device_name] = False
+    last_speed = device_playback_speeds[device_name]
     
     # 循環播放
-    while not stop_current_audio_flag:
+    while not device_stop_flags[device_name]:
         # 根據當前速度計算新的播放率
-        adjusted_rate = int(original_rate * current_playback_speed)
+        adjusted_rate = int(original_rate * device_playback_speeds[device_name])
         
         # 開啟新的音訊流，使用調整後的播放率
         stream = p.open(format=p.get_format_from_width(audio_data['format']),
@@ -165,13 +215,13 @@ def play_audio_loop(file_path, initial_speed=1.0):
                        rate=adjusted_rate,
                        output=True)
                        
-        print(f"播放速度已設定為: {current_playback_speed}, 調整後播放率: {adjusted_rate}")
+        print(f"{device_name} 播放速度已設定為: {device_playback_speeds[device_name]}, 調整後播放率: {adjusted_rate}")
         
         # 分段播放整個檔案
-        chunk = 512  # 較小的資料塊大小以減少延遲
+        chunk = 512
         for i in range(0, len(original_frames), chunk * audio_data['format'] * audio_data['channels']):
-            if stop_current_audio_flag or last_speed != current_playback_speed:
-                break  # 如果需要停止或速度改變，跳出內循環
+            if device_stop_flags[device_name] or last_speed != device_playback_speeds[device_name]:
+                break
                 
             chunk_data = original_frames[i:i + chunk * audio_data['format'] * audio_data['channels']]
             if len(chunk_data) > 0:
@@ -182,28 +232,29 @@ def play_audio_loop(file_path, initial_speed=1.0):
         stream.close()
         
         # 更新上次速度
-        last_speed = current_playback_speed
+        last_speed = device_playback_speeds[device_name]
     
     # 清理資源
     p.terminate()
-    print("音訊播放停止")
+    print(f"{device_name} 音訊播放停止")
 
-def play_audio_once(file_path):
-    """使用預加載的資料播放音訊一次"""
-    global stop_current_audio_flag
+def play_audio_once(device_name, file_path, speed=1.0):
+    """使用預加載的資料播放音訊一次，支援速度控制"""
+    global device_stop_flags
     
     if file_path not in loaded_audio_data:
-        log_message(f"錯誤: 找不到預加載的音效檔案 {file_path}")
+        print(f"錯誤: 找不到預加載的音效檔案 {file_path}")
         return
     
     audio_data = loaded_audio_data[file_path]
     p = pyaudio.PyAudio()
     
-    # 開啟音訊流
+    # 開啟音訊流，使用調整後的播放率
+    adjusted_rate = int(audio_data['rate'] * speed)
     stream = p.open(format=p.get_format_from_width(audio_data['format']),
-                    channels=audio_data['channels'],
-                    rate=audio_data['rate'],
-                    output=True)
+                   channels=audio_data['channels'],
+                   rate=adjusted_rate,
+                   output=True)
     
     # 設定較小的資料塊大小以減少延遲
     chunk = 512
@@ -211,11 +262,11 @@ def play_audio_once(file_path):
     # 將二進制資料轉換為可讀取的位置
     frames = audio_data['frames']
     
-    stop_current_audio_flag = False
+    device_stop_flags[device_name] = False
     
     # 分段播放整個檔案
     for i in range(0, len(frames), chunk * audio_data['format'] * audio_data['channels']):
-        if stop_current_audio_flag:
+        if device_stop_flags[device_name]:
             break
         chunk_data = frames[i:i + chunk * audio_data['format'] * audio_data['channels']]
         if len(chunk_data) > 0:
@@ -225,110 +276,137 @@ def play_audio_once(file_path):
     stream.stop_stream()
     stream.close()
     p.terminate()
-    log_message("單次音訊播放完成")
+    print(f"{device_name} 單次音訊播放完成")
 
-def stop_current_audio():
-    """停止目前正在播放的音訊並重置播放速度"""
-    global current_audio_thread, stop_current_audio_flag, current_playback_speed
+def stop_device_audio(device_name):
+    """停止指定裝置正在播放的音訊"""
+    global device_audio_threads, device_stop_flags
     
-    if current_audio_thread and current_audio_thread.is_alive():
-        stop_current_audio_flag = True
-        current_audio_thread.join(timeout=1.0)  # 等待線程結束，最多1秒
-        print("已停止先前的音訊播放")
+    if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+        device_stop_flags[device_name] = True
+        device_audio_threads[device_name].join(timeout=1.0)  # 等待線程結束，最多1秒
+        print(f"已停止 {device_name} 的音訊播放")
     
-    stop_current_audio_flag = False
-    
-    # 重置播放速度回預設值 1.0
-    current_playback_speed = 1.0
-    print("播放速度已重置為 1.0")
+    device_stop_flags[device_name] = False
 
-def play_music(file_path, loop=True, speed=1.0):
-    """開始播放指定的音樂檔案"""
-    global current_audio_thread, current_playback_speed
+def play_device_music(device_name, file_path, loop=True, speed=1.0):
+    """開始為指定裝置播放音樂"""
+    global device_audio_threads, device_playback_speeds
     
-    # 先停止當前播放
-    stop_current_audio()
+    # 先停止該裝置當前播放的音訊
+    stop_device_audio(device_name)
     
     # 設定初始速度
-    current_playback_speed = speed
+    device_playback_speeds[device_name] = speed
     
     if loop:
         # 啟動新的播放線程
-        current_audio_thread = threading.Thread(target=play_audio_loop, args=(file_path, speed))
-        current_audio_thread.daemon = True
-        current_audio_thread.start()
-        print(f"開始循環播放: {file_path}, 速度: {speed}")
+        device_audio_threads[device_name] = threading.Thread(
+            target=play_audio_loop, 
+            args=(device_name, file_path, speed)
+        )
+        device_audio_threads[device_name].daemon = True
+        device_audio_threads[device_name].start()
+        print(f"開始為 {device_name} 循環播放: {file_path}, 速度: {speed}")
     else:
         # 單次播放
-        current_audio_thread = threading.Thread(target=play_audio_once, args=(file_path,))
-        current_audio_thread.daemon = True
-        current_audio_thread.start()
-        print(f"開始單次播放: {file_path}")
+        device_audio_threads[device_name] = threading.Thread(
+            target=play_audio_once, 
+            args=(device_name, file_path, speed)
+        )
+        device_audio_threads[device_name].daemon = True
+        device_audio_threads[device_name].start()
+        print(f"開始為 {device_name} 單次播放: {file_path}, 速度: {speed}")
 
 # 處理來自ESP32的資料
 def process_data(device_name, data):
     # 根據裝置名稱分別處理資料
     if device_name == "ESP32_HornBLE":
-        # 處理喇叭控制器資料
+    # 處理喇叭控制器資料
+        global horn_mode_switched
+        
         if data[0] == 254:  # 播放指令
-            log_message(f"喇叭控制器: 觸發播放")
+            print(f"喇叭控制器: 觸發播放")
+            # 根據當前模式選擇音效檔案
+            horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
+            play_device_music(device_name, horn_file, loop=False)
         else:
             position = data[0]  # 播放位置 (0-100)
-            log_message(f"喇叭控制器: 設定播放位置 {position}%")
+            print(f"喇叭控制器: 設定播放位置 {position}%")
             
+            # 檢查是否已達到 100 以切換模式
+            if position >= 100 and not horn_mode_switched:
+                horn_mode_switched = True
+                print("喇叭控制器: 達到 100%，切換到反向模式和新音效")
+            
+            # 選擇當前模式對應的音效檔案
+            horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
+            
+            # 根據當前模式計算播放速度
+            if not horn_mode_switched:
+                # 第一次達到 100 前：位置值 0-100 對應速度 0.5-2.0，100 是最快
+                speed = 0.5 + (position / 100.0) * 1.5
+            else:
+                # 第一次達到 100 後：位置值 0-100 對應速度 2.0-0.5，100 是最慢
+                speed = 2.0 - (position / 100.0) * 1.5
+            
+            # 確保速度在合理範圍內
+            speed = max(0.5, min(2.0, speed))
+            
+            print(f"喇叭控制器: 模式 {'反向' if horn_mode_switched else '正向'}, 使用音效 {horn_file}, 播放速度為 {speed}")
+            
+            # 播放選定的喇叭音效一次，使用計算出的速度
+            play_device_music(device_name, horn_file, loop=False, speed=speed)
+
     elif device_name == "ESP32_Wheelspeed2_BLE":
-    # 處理輪子速度控制器資料
-        global current_playback_speed  # 添加這行來使用全域變數
-        
+        # 處理輪子速度控制器資料
         speed_str = data.decode('utf-8')
         if speed_str == "STOP_PLAYBACK":
             print("輪子速度控制器: 停止播放")
-            stop_current_audio()
+            stop_device_audio(device_name)
         else:
             try:
                 speed = float(speed_str)
                 print(f"輪子速度控制器: 接收到速度值 {speed}")
                 
                 # 如果當前沒有播放音訊，則開始播放
-                if not current_audio_thread or not current_audio_thread.is_alive():
+                if not device_audio_threads[device_name] or not device_audio_threads[device_name].is_alive():
                     print(f"開始以速度 {speed} 播放wheel音效")
-                    play_music(wheel_audio_file, loop=True, speed=speed)
+                    play_device_music(device_name, wheel_audio_file, loop=True, speed=speed)
                 else:
                     # 更新播放速度
-                    print(f"更新播放速度為 {speed} (之前為 {current_playback_speed})")
-                    current_playback_speed = speed
+                    print(f"更新播放速度為 {speed} (之前為 {device_playback_speeds[device_name]})")
+                    device_playback_speeds[device_name] = speed
             except ValueError:
                 print(f"輪子速度控制器: 無法解析資料 {speed_str}")
-                
+
     elif device_name == "ESP32_RDP_BLE":
         # 處理輪子觸發控制器資料
         command = data.decode('utf-8')
-        log_message(f"輪子觸發控制器: 收到命令 {command}")
+        print(f"輪子觸發控制器: 收到命令 {command}")
         
         if command == "WHEEL_TRIGGER":
-            log_message("RDP 按鈕已觸發，播放音效")
-            # 停止當前播放的任何音訊
-            stop_current_audio()
+            print("RDP 按鈕已觸發，播放音效")
             # 單次播放 RDP 音效
-            play_music(rdp_audio_file, loop=False)
-        
+            play_device_music(device_name, rdp_audio_file, loop=False)
+
     elif device_name == "ESP32_MusicSensor_BLE":
         # 處理歌單控制器資料
         command = data.decode('utf-8')
-        log_message(f"歌單控制器: 收到命令 {command}")
+        print(f"歌單控制器: 收到命令 {command}")
         
         # 根據命令選擇並播放對應的音樂
         if command == "SELECT_MUSIC_1":
-            log_message("切換到音樂1")
-            play_music(music_files["1"], loop=True)
+            print("切換到音樂1")
+            play_device_music(device_name, music_files["1"], loop=True)
         
         elif command == "SELECT_MUSIC_2":
-            log_message("切換到音樂2")
-            play_music(music_files["2"], loop=True)
+            print("切換到音樂2")
+            play_device_music(device_name, music_files["2"], loop=True)
         
         elif command == "SELECT_MUSIC_3":
-            log_message("切換到音樂3")
-            play_music(music_files["3"], loop=True)
+            print("切換到音樂3")
+            play_device_music(device_name, music_files["3"], loop=True)
 
 # 回調函數，處理來自裝置的通知
 def notification_handler(uuid):
