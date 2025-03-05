@@ -352,72 +352,55 @@ def process_data(device_name, data):
     # 處理喇叭控制器資料
         global horn_mode_switched, hornPlayed
         
-        global horn_mode_switched, hornPlayed
-    
         if data[0] == 254:  # 播放指令 (開始彎曲)
             print(f"喇叭控制器: 偵測到彎曲開始, hornPlayed={hornPlayed}")
             
             # 只有當還沒有播放過時才播放音效
             if not hornPlayed:
-                # 根據當前模式選擇音效檔案
-                horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
-                play_device_music(device_name, horn_file, loop=False)
-                print(f"喇叭控制器: 開始播放音效 {horn_file}")
+                # 一律先使用未切換的音效
+                play_device_music(device_name, horn_audio_file_before, loop=False)
+                print(f"喇叭控制器: 開始播放音效 {horn_audio_file_before}")
                 # 標記已播放
                 hornPlayed = True
             else:
                 print("喇叭控制器: 已經在播放音效，忽略重複的開始彎曲訊號")
+                
         elif data[0] == 253:  # 停止指令 (停止彎曲)
             print(f"喇叭控制器: 偵測到彎曲結束")
-            # 無論正在播放什麼音效 (before或after)，都停止播放
+            # 無論正在播放什麼音效，都停止播放
             stop_device_audio(device_name)
             # 重置 switch 狀態和播放標記
             horn_mode_switched = False
             hornPlayed = False
             print("喇叭控制器: 已重置模式狀態和播放標記")
+            
         else:
             position = data[0]  # 播放位置 (0-100)
             print(f"喇叭控制器: 設定播放位置 {position}%")
-            
-            # 記錄之前的模式狀態
-            prev_mode_switched = horn_mode_switched
-            
-            # 檢查是否已達到 100 以切換模式
-            if position >= 100 and not horn_mode_switched:
-                horn_mode_switched = True
-                print("喇叭控制器: 達到 100%，切換到反向模式和新音效")
-            
-            # 選擇當前模式對應的音效檔案
-            horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
-            
-            # 模式發生變化時，停止當前播放並播放新音效
-            if prev_mode_switched != horn_mode_switched and horn_mode_switched != False:
-                print("喇叭控制器: 模式切換，中斷當前音效並播放新音效")
+            if position == 0 and hornPlayed:
+                # 無論正在播放什麼音效，都停止播放
                 stop_device_audio(device_name)
-                play_device_music(device_name, horn_file, loop=False)
+                # 重置 switch 狀態和播放標記
+                horn_mode_switched = False
+                hornPlayed = False
+                print("喇叭控制器: 已重置模式狀態和播放標記")
+            
+            # 檢查是否是第一次偵測到值減少
+            static_last_position = getattr(process_data, 'last_position', None)
+            if static_last_position is None:
+                # 首次初始化
+                process_data.last_position = position
+            elif position < static_last_position-10 and not horn_mode_switched and hornPlayed:
+                # 第一次偵測到值減少
+                horn_mode_switched = True
+                print("喇叭控制器: 第一次偵測到值減少，切換到反向模式和新音效")
+                # 停止當前播放並播放新音效
+                stop_device_audio(device_name)
+                play_device_music(device_name, horn_audio_file_after, loop=False)
                 hornPlayed = True
-                
-            if not horn_mode_switched:
-            # 第一次達到 100 前：位置值 0-100 對應速度 0.5-1.0，100 是最快
-                speed = 0.35 + (position / 100.0) * 0.75
-            else:
-                # 第一次達到 100 後：位置值 0-100 對應速度 1.0-0.5，100 是最慢
-                speed = 1.0 - (position / 100.0) * 0.75
             
-            # 確保速度在合理範圍內
-            speed = max(1.0, min(1.0, speed))
-            
-            print(f"喇叭控制器: 模式 {'反向' if horn_mode_switched else '正向'}, 調整播放速度為 {speed}")
-            
-            # 如果已經播放過音效並且音效仍在播放中，只更新速度
-            if hornPlayed and device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                device_playback_speeds[device_name] = speed
-            # 如果已經播放過但音效已結束，不要重新播放
-            elif hornPlayed:
-                print("喇叭控制器: 音效已播放過，等待停止彎曲指令")
-            # 如果尚未播放過（這種情況理論上不應該發生，因為應該先收到 254）
-            else:
-                print("喇叭控制器: 尚未收到開始彎曲指令，但收到位置值")
+            # 更新上次的位置值
+            process_data.last_position = position
 
     elif device_name == "ESP32_Wheelspeed2_BLE":
         # 處理輪子速度控制器資料
