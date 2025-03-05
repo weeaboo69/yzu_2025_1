@@ -9,12 +9,13 @@
 
 // 感應器腳位及閾值定義
 int zxw = 0;
+int lastSentValue = 0;
 const int SENSOR_PIN = 34;
 const int SENSOR_PIN_2 = 35;
 const int TOTAL_MAX = 8100;     // 總值未按壓時的最大值
-const int TOTAL_MIN = 7600;     // 總值最大按壓時的最小值
-const int BEND_THRESHOLD = 7800;  // 彎曲閾值，低於此值視為彎曲
-const int BEND_THRESHOLD2= 8100;
+const int TOTAL_MIN = 7550;     // 總值最大按壓時的最小值
+const int BEND_THRESHOLD = 7900;  // 彎曲閾值，低於此值視為彎曲
+const int BEND_THRESHOLD2= 8000;
 const int SEND_INTERVAL = 50;     // 藍牙發送間隔 (毫秒)
 const int MONITOR_INTERVAL = 500; // 監測數值間隔 (毫秒)
 
@@ -109,10 +110,10 @@ void loop() {
   
   // 檢測彎曲狀態變化 (低於閾值表示按壓/彎曲)
   bool currentlyBent = (totalValue < BEND_THRESHOLD);
-  bool currentlyBent2 = (totalValue == BEND_THRESHOLD2);
+  bool currentlyBent2 = (totalValue >= BEND_THRESHOLD2);
   
   // 如果從未彎曲變為彎曲
-  if (currentlyBent && !isBent) {
+if (currentlyBent && !isBent) {
   isBent = true;
   hornPlayed = false;  // 重置播放標記
   lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
@@ -141,6 +142,27 @@ else if (currentlyBent2 && isBent && (currentTime - lastBendStartTime > 100)) {
     Serial.println(zxw);
   }
 }
+
+  // 在彎曲期間，每當值變化 200 就發送一次
+  if (isBent && deviceConnected && currentTime - lastSendTime >= SEND_INTERVAL) {
+    // 如果值與上次發送的值相差超過 200
+    if (abs(totalValue - lastSentValue) >= 200) {
+      // 計算進度值
+      int playbackPosition = map(totalValue, TOTAL_MAX, TOTAL_MIN, 0, 100);
+      playbackPosition = constrain(playbackPosition, 0, 100);
+      
+      // 發送進度控制命令
+      uint8_t positionValue = (uint8_t)playbackPosition;
+      pCharacteristic->setValue(&positionValue, 1);
+      pCharacteristic->notify();
+      Serial.print("發送新的位置值: ");
+      Serial.println(positionValue);
+      
+      // 更新上次發送的值
+      lastSentValue = totalValue;
+      lastSendTime = currentTime;
+    }
+  }
   
   // 有裝置連接時，發送數據
   if (deviceConnected && currentTime - lastSendTime >= SEND_INTERVAL) {

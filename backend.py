@@ -354,20 +354,21 @@ def process_data(device_name, data):
         
         if data[0] == 254:  # 播放指令 (開始彎曲)
             print(f"喇叭控制器: 偵測到彎曲開始, hornPlayed={hornPlayed}")
-            
-            # 只有當還沒有播放過時才播放音效
+
             if not hornPlayed:
-                # 一律先使用未切換的音效
+                stop_device_audio(device_name)  # 先停止任何正在播放的音效
                 play_device_music(device_name, horn_audio_file_before, loop=False)
                 print(f"喇叭控制器: 開始播放音效 {horn_audio_file_before}")
                 # 標記已播放
                 hornPlayed = True
-            else:
-                print("喇叭控制器: 已經在播放音效，忽略重複的開始彎曲訊號")
+                # 初始化最後的位置值
+                process_data.last_position = 0
+                # 重置模式切換狀態
+                horn_mode_switched = False
                 
         elif data[0] == 253:  # 停止指令 (停止彎曲)
             print(f"喇叭控制器: 偵測到彎曲結束")
-            # 無論正在播放什麼音效，都停止播放
+            # 停止所有喇叭相關音效
             stop_device_audio(device_name)
             # 重置 switch 狀態和播放標記
             horn_mode_switched = False
@@ -377,23 +378,15 @@ def process_data(device_name, data):
         else:
             position = data[0]  # 播放位置 (0-100)
             print(f"喇叭控制器: 設定播放位置 {position}%")
-            if position == 0 and hornPlayed:
-                # 無論正在播放什麼音效，都停止播放
-                stop_device_audio(device_name)
-                # 重置 switch 狀態和播放標記
-                horn_mode_switched = False
-                hornPlayed = False
-                print("喇叭控制器: 已重置模式狀態和播放標記")
             
-            # 檢查是否是第一次偵測到值減少
-            static_last_position = getattr(process_data, 'last_position', None)
-            if static_last_position is None:
-                # 首次初始化
-                process_data.last_position = position
-            elif position < static_last_position-10 and not horn_mode_switched and hornPlayed:
-                # 第一次偵測到值減少
+            # 檢查是否是第一次偵測到值增加
+            static_last_position = getattr(process_data, 'last_position', 0)
+            
+            # 如果現在位置比上一次增加了10以上，且還沒有切換過模式，且已經在播放音效
+            if position < static_last_position - 10 and not horn_mode_switched and hornPlayed:
+                # 切換到 after 音效
                 horn_mode_switched = True
-                print("喇叭控制器: 第一次偵測到值減少，切換到反向模式和新音效")
+                print("喇叭控制器: 偵測到彎曲程度增加超過10，切換到新音效")
                 # 停止當前播放並播放新音效
                 stop_device_audio(device_name)
                 play_device_music(device_name, horn_audio_file_after, loop=False)
