@@ -39,7 +39,7 @@ horn_mode_switched = False
 audio_stream = None  # 用於儲存音訊流的全局變數
 loaded_audio_data = {}
 
-horn_audio_file_before = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_sound.wav"  # 切換前的喇叭音效
+horn_audio_file_before = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_before.wav"  # 切換前的喇叭音效
 horn_audio_file_after = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_after.wav"   # 切換後的喇叭音效
 wheel_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound.wav"  
 music_files = {
@@ -239,7 +239,7 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
     print(f"{device_name} 音訊播放停止")
 
 def play_audio_once(device_name, file_path, speed=1.0):
-    """使用預加載的資料播放音訊一次，支援速度控制"""
+    """使用預加載的資料播放音訊一次，支援即時速度控制"""
     global device_stop_flags
     
     if file_path not in loaded_audio_data:
@@ -249,30 +249,55 @@ def play_audio_once(device_name, file_path, speed=1.0):
     audio_data = loaded_audio_data[file_path]
     p = pyaudio.PyAudio()
     
-    # 開啟音訊流，使用調整後的播放率
-    adjusted_rate = int(audio_data['rate'] * speed)
-    stream = p.open(format=p.get_format_from_width(audio_data['format']),
-                   channels=audio_data['channels'],
-                   rate=adjusted_rate,  # 這裡使用調整後的採樣率
+    # 取得原始資料
+    original_format = audio_data['format']
+    original_channels = audio_data['channels']
+    original_rate = audio_data['rate']
+    frames = audio_data['frames']
+    
+    # 開啟一個持續的音訊流，使用原始採樣率
+    stream = p.open(format=p.get_format_from_width(original_format),
+                   channels=original_channels,
+                   rate=original_rate,  # 使用原始採樣率
                    output=True)
     
-    print(f"{device_name} 使用速度因子: {speed}, 原始採樣率: {audio_data['rate']}, 調整後採樣率: {adjusted_rate}")
-    
     # 設定較小的資料塊大小以減少延遲
-    chunk = 512
-    
-    # 將二進制資料轉換為可讀取的位置
-    frames = audio_data['frames']
+    chunk = 256  # 使用更小的塊，提高響應速度
     
     device_stop_flags[device_name] = False
     
     # 分段播放整個檔案
-    for i in range(0, len(frames), chunk * audio_data['format'] * audio_data['channels']):
+    for i in range(0, len(frames), chunk * original_format * original_channels):
         if device_stop_flags[device_name]:
             break
-        chunk_data = frames[i:i + chunk * audio_data['format'] * audio_data['channels']]
-        if len(chunk_data) > 0:
-            stream.write(chunk_data)
+            
+        # 獲取當前塊的數據
+        chunk_data = frames[i:i + chunk * original_format * original_channels]
+        if len(chunk_data) == 0:
+            break
+        
+        # 獲取當前設定的播放速度 (而不是使用初始參數)
+        current_speed = device_playback_speeds[device_name]
+        
+        # 如果速度不是 1.0，則需要重新採樣
+        if current_speed != 1.0 and len(chunk_data) > 0:
+            # 轉換為 numpy 數組來處理
+            audio_array = np.frombuffer(chunk_data, dtype=np.int16)
+            
+            # 計算新的長度 (加速則縮短，減速則延長)
+            new_length = int(len(audio_array) / current_speed)
+            
+            # 確保新長度至少有一個樣本
+            new_length = max(1, new_length)
+            
+            # 使用 signal.resample 來改變速度
+            resampled_audio = signal.resample(audio_array, new_length)
+            
+            # 轉回 bytes 格式
+            chunk_data = resampled_audio.astype(np.int16).tobytes()
+        
+        # 播放處理後的音頻塊
+        stream.write(chunk_data)
     
     # 關閉資源
     stream.stop_stream()
@@ -372,16 +397,15 @@ def process_data(device_name, data):
                 play_device_music(device_name, horn_file, loop=False)
                 hornPlayed = True
                 
-            # 根據當前模式計算播放速度
             if not horn_mode_switched:
-    # 第一次達到 100 前：位置值 0-100 對應速度 0.3-3.0，100 是最快
-                speed = 0.3 + (position / 100.0) * 2.7
+            # 第一次達到 100 前：位置值 0-100 對應速度 0.5-1.0，100 是最快
+                speed = 0.35 + (position / 100.0) * 0.75
             else:
-            # 第一次達到 100 後：位置值 0-100 對應速度 3.0-0.3，100 是最慢
-                speed = 3.0 - (position / 100.0) * 2.7
-
-        # 確保速度在合理範圍內
-            speed = max(0.3, min(3.0, speed))
+                # 第一次達到 100 後：位置值 0-100 對應速度 1.0-0.5，100 是最慢
+                speed = 1.0 - (position / 100.0) * 0.75
+            
+            # 確保速度在合理範圍內
+            speed = max(1.0, min(1.0, speed))
             
             print(f"喇叭控制器: 模式 {'反向' if horn_mode_switched else '正向'}, 調整播放速度為 {speed}")
             
