@@ -39,7 +39,7 @@ horn_mode_switched = False
 audio_stream = None  # 用於儲存音訊流的全局變數
 loaded_audio_data = {}
 
-horn_audio_file_before = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_before.wav"  # 切換前的喇叭音效
+horn_audio_file_before = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_sound.wav"  # 切換前的喇叭音效
 horn_audio_file_after = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_after.wav"   # 切換後的喇叭音效
 wheel_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound.wav"  
 music_files = {
@@ -327,16 +327,21 @@ def process_data(device_name, data):
     # 處理喇叭控制器資料
         global horn_mode_switched, hornPlayed
         
+        global horn_mode_switched, hornPlayed
+    
         if data[0] == 254:  # 播放指令 (開始彎曲)
-            print(f"喇叭控制器: 偵測到彎曲開始")
-            # 重置播放標記
-            hornPlayed = False
-            # 根據當前模式選擇音效檔案
-            horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
-            play_device_music(device_name, horn_file, loop=False)
-            print(f"喇叭控制器: 開始播放音效 {horn_file}")
-            # 標記已播放
-            hornPlayed = True
+            print(f"喇叭控制器: 偵測到彎曲開始, hornPlayed={hornPlayed}")
+            
+            # 只有當還沒有播放過時才播放音效
+            if not hornPlayed:
+                # 根據當前模式選擇音效檔案
+                horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
+                play_device_music(device_name, horn_file, loop=False)
+                print(f"喇叭控制器: 開始播放音效 {horn_file}")
+                # 標記已播放
+                hornPlayed = True
+            else:
+                print("喇叭控制器: 已經在播放音效，忽略重複的開始彎曲訊號")
         elif data[0] == 253:  # 停止指令 (停止彎曲)
             print(f"喇叭控制器: 偵測到彎曲結束")
             # 無論正在播放什麼音效 (before或after)，都停止播放
@@ -361,7 +366,7 @@ def process_data(device_name, data):
             horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
             
             # 模式發生變化時，停止當前播放並播放新音效
-            if prev_mode_switched != horn_mode_switched:
+            if prev_mode_switched != horn_mode_switched and horn_mode_switched != False:
                 print("喇叭控制器: 模式切換，中斷當前音效並播放新音效")
                 stop_device_audio(device_name)
                 play_device_music(device_name, horn_file, loop=False)
