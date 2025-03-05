@@ -34,7 +34,7 @@ device_playback_speeds = {
     "ESP32_MusicSensor_BLE": 1.0
 }
 
-# 喇叭模式切換狀態
+hornPlayed = False
 horn_mode_switched = False
 audio_stream = None  # 用於儲存音訊流的全局變數
 loaded_audio_data = {}
@@ -52,9 +52,9 @@ rdp_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     "ESP32_HornBLE",           # 喇叭控制器
-    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
-    #"ESP32_MusicSensor_BLE"    # 歌單控制器
+    "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
 # 特性UUID (需要與ESP32端匹配)
@@ -253,8 +253,10 @@ def play_audio_once(device_name, file_path, speed=1.0):
     adjusted_rate = int(audio_data['rate'] * speed)
     stream = p.open(format=p.get_format_from_width(audio_data['format']),
                    channels=audio_data['channels'],
-                   rate=adjusted_rate,
+                   rate=adjusted_rate,  # 這裡使用調整後的採樣率
                    output=True)
+    
+    print(f"{device_name} 使用速度因子: {speed}, 原始採樣率: {audio_data['rate']}, 調整後採樣率: {adjusted_rate}")
     
     # 設定較小的資料塊大小以減少延遲
     chunk = 512
@@ -323,16 +325,32 @@ def process_data(device_name, data):
     # 根據裝置名稱分別處理資料
     if device_name == "ESP32_HornBLE":
     # 處理喇叭控制器資料
-        global horn_mode_switched
+        global horn_mode_switched, hornPlayed
         
-        if data[0] == 254:  # 播放指令
-            print(f"喇叭控制器: 觸發播放")
+        if data[0] == 254:  # 播放指令 (開始彎曲)
+            print(f"喇叭控制器: 偵測到彎曲開始")
+            # 重置播放標記
+            hornPlayed = False
             # 根據當前模式選擇音效檔案
             horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
             play_device_music(device_name, horn_file, loop=False)
+            print(f"喇叭控制器: 開始播放音效 {horn_file}")
+            # 標記已播放
+            hornPlayed = True
+        elif data[0] == 253:  # 停止指令 (停止彎曲)
+            print(f"喇叭控制器: 偵測到彎曲結束")
+            # 無論正在播放什麼音效 (before或after)，都停止播放
+            stop_device_audio(device_name)
+            # 重置 switch 狀態和播放標記
+            horn_mode_switched = False
+            hornPlayed = False
+            print("喇叭控制器: 已重置模式狀態和播放標記")
         else:
             position = data[0]  # 播放位置 (0-100)
             print(f"喇叭控制器: 設定播放位置 {position}%")
+            
+            # 記錄之前的模式狀態
+            prev_mode_switched = horn_mode_switched
             
             # 檢查是否已達到 100 以切換模式
             if position >= 100 and not horn_mode_switched:
@@ -342,21 +360,35 @@ def process_data(device_name, data):
             # 選擇當前模式對應的音效檔案
             horn_file = horn_audio_file_after if horn_mode_switched else horn_audio_file_before
             
+            # 模式發生變化時，停止當前播放並播放新音效
+            if prev_mode_switched != horn_mode_switched:
+                print("喇叭控制器: 模式切換，中斷當前音效並播放新音效")
+                stop_device_audio(device_name)
+                play_device_music(device_name, horn_file, loop=False)
+                hornPlayed = True
+                
             # 根據當前模式計算播放速度
             if not horn_mode_switched:
-                # 第一次達到 100 前：位置值 0-100 對應速度 0.5-2.0，100 是最快
-                speed = 0.5 + (position / 100.0) * 1.5
+    # 第一次達到 100 前：位置值 0-100 對應速度 0.3-3.0，100 是最快
+                speed = 0.3 + (position / 100.0) * 2.7
             else:
-                # 第一次達到 100 後：位置值 0-100 對應速度 2.0-0.5，100 是最慢
-                speed = 2.0 - (position / 100.0) * 1.5
+            # 第一次達到 100 後：位置值 0-100 對應速度 3.0-0.3，100 是最慢
+                speed = 3.0 - (position / 100.0) * 2.7
+
+        # 確保速度在合理範圍內
+            speed = max(0.3, min(3.0, speed))
             
-            # 確保速度在合理範圍內
-            speed = max(0.5, min(2.0, speed))
+            print(f"喇叭控制器: 模式 {'反向' if horn_mode_switched else '正向'}, 調整播放速度為 {speed}")
             
-            print(f"喇叭控制器: 模式 {'反向' if horn_mode_switched else '正向'}, 使用音效 {horn_file}, 播放速度為 {speed}")
-            
-            # 播放選定的喇叭音效一次，使用計算出的速度
-            play_device_music(device_name, horn_file, loop=False, speed=speed)
+            # 如果已經播放過音效並且音效仍在播放中，只更新速度
+            if hornPlayed and device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                device_playback_speeds[device_name] = speed
+            # 如果已經播放過但音效已結束，不要重新播放
+            elif hornPlayed:
+                print("喇叭控制器: 音效已播放過，等待停止彎曲指令")
+            # 如果尚未播放過（這種情況理論上不應該發生，因為應該先收到 254）
+            else:
+                print("喇叭控制器: 尚未收到開始彎曲指令，但收到位置值")
 
     elif device_name == "ESP32_Wheelspeed2_BLE":
         # 處理輪子速度控制器資料
