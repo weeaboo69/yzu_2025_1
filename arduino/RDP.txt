@@ -9,6 +9,8 @@
 
 const int BUTTON_PIN = 13;
 bool lastButtonState = false;
+unsigned long buttonPressStartTime = 0;  // 按鈕按下開始時間
+bool buttonWasPressed = false;  // 按鈕是否已被按下
 
 BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
@@ -72,16 +74,27 @@ void setup() {
 void loop() {
   bool buttonPressed = !digitalRead(BUTTON_PIN);
   
-  // 只有當按鈕從放開變成按下時才發送指令
+  // 按鈕從放開變為按下時，記錄開始時間
   if (buttonPressed && !lastButtonState) {
     Serial.println("按鈕按下");
+    buttonPressStartTime = millis();  // 記錄按下開始時間
+    buttonWasPressed = true;
+  }
+  
+  // 按鈕從按下變為放開時，計算按下時長並發送
+  if (!buttonPressed && lastButtonState && buttonWasPressed) {
+    Serial.println("按鈕放開");
+    unsigned long pressDuration = millis() - buttonPressStartTime;  // 計算按下時長(毫秒)
+    
     if (deviceConnected) {
-      // 發送命令
-      String commandStr = "WHEEL_TRIGGER";
+      // 發送按下時長（轉換為字串）
+      String commandStr = "BUTTON_DURATION:" + String(pressDuration);
       pCharacteristic->setValue(commandStr);
       pCharacteristic->notify();
-      Serial.println("發送 WHEEL_TRIGGER 命令");
+      Serial.println("發送按鈕按下時長: " + String(pressDuration) + " ms");
     }
+    
+    buttonWasPressed = false;  // 重置按鈕狀態
   }
   
   lastButtonState = buttonPressed;  // 更新前一個狀態
