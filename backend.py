@@ -579,10 +579,10 @@ def start_backend():
 # 測試播放特定音樂
 def test_play_music(index, loop=True):
     if index in music_files:
-        play_music(music_files[index], loop)
+        play_device_music(music_files[index], loop)
         return True
     elif index == "RDP":
-        play_music(rdp_audio_file, loop=False)
+        play_device_music(rdp_audio_file, loop=False)
         return True
     return False
 
