@@ -52,9 +52,9 @@ rdp_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     "ESP32_HornBLE",           # 喇叭控制器
-    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    #"ESP32_RDP_BLE",           # 輪子觸發控制器
-    #"ESP32_MusicSensor_BLE"    # 歌單控制器
+    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
 # 特性UUID (需要與ESP32端匹配)
@@ -383,7 +383,7 @@ def process_data(device_name, data):
             static_last_position = getattr(process_data, 'last_position', 0)
             
             # 如果現在位置比上一次增加了10以上，且還沒有切換過模式，且已經在播放音效
-            if position < static_last_position - 10 and not horn_mode_switched and hornPlayed:
+            if position < static_last_position - 20 and not horn_mode_switched and hornPlayed:
                 # 切換到 after 音效
                 horn_mode_switched = True
                 print("喇叭控制器: 偵測到彎曲程度增加超過10，切換到新音效")
@@ -418,11 +418,36 @@ def process_data(device_name, data):
                 print(f"輪子速度控制器: 無法解析資料 {speed_str}")
 
     elif device_name == "ESP32_RDP_BLE":
-        # 處理輪子觸發控制器資料
-        command = data.decode('utf-8')
-        print(f"輪子觸發控制器: 收到命令 {command}")
+    # 處理輪子觸發控制器資料
+        command_str = data.decode('utf-8')
+        print(f"輪子觸發控制器: 收到命令 {command_str}")
         
-        if command == "WHEEL_TRIGGER":
+        # 檢查是否為按鈕時長命令
+        if command_str.startswith("BUTTON_DURATION:"):
+            try:
+                # 解析按下的時長（毫秒）
+                duration_ms = int(command_str.split(':')[1])
+                duration_sec = duration_ms / 1000.0  # 轉換為秒
+                print(f"按鈕按下時長: {duration_sec:.2f} 秒")
+                
+                # 根據時長計算播放速度
+                # 小於1秒，速度為1
+                # 大於1秒小於2秒，速度為1.5
+                # 大於2秒，速度為2.0
+                speed = 1.0
+                if duration_sec > 1.0 and duration_sec <= 2.0:
+                    speed = 0.75
+                elif duration_sec > 2.0:
+                    speed = 0.5
+                    
+                print(f"RDP 按鈕已觸發，播放音效，速度: {speed}")
+                # 單次播放 RDP 音效，使用計算出的速度
+                play_device_music(device_name, rdp_audio_file, loop=False, speed=speed)
+                
+            except (ValueError, IndexError) as e:
+                print(f"解析按鈕時長出錯: {e}")
+        elif command_str == "WHEEL_TRIGGER":
+            # 保留原有的處理邏輯，以防舊版程式還會發送此命令
             print("RDP 按鈕已觸發，播放音效")
             # 單次播放 RDP 音效
             play_device_music(device_name, rdp_audio_file, loop=False)
