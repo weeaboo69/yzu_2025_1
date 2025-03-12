@@ -125,6 +125,37 @@ class MusicControlApp:
         self.current_music_var = tk.StringVar(value="無播放")
         ttk.Label(status_frame, text="目前播放:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         ttk.Label(status_frame, textvariable=self.current_music_var).grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+
+        # 在音樂控制區域內容中新增錄音控制區
+        record_control_frame = ttk.LabelFrame(music_frame, text="錄音控制")
+        record_control_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # 錄音狀態顯示
+        self.record_status_var = tk.StringVar(value="未錄音")
+        ttk.Label(record_control_frame, text="錄音狀態:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(record_control_frame, textvariable=self.record_status_var).grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # 錄音控制按鈕
+        button_frame = ttk.Frame(record_control_frame)
+        button_frame.grid(row=1, column=0, columnspan=2, pady=5)
+        
+        ttk.Button(button_frame, text="開始錄音", 
+                command=lambda: backend.start_recording()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
+        
+        ttk.Button(button_frame, text="停止錄音", 
+                command=lambda: backend.stop_recording()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
+        
+        # QR Code 顯示區域
+        self.qr_frame = ttk.LabelFrame(music_frame, text="下載連結")
+        self.qr_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # QR Code 連結標籤
+        self.qr_link_var = tk.StringVar(value="")
+        ttk.Label(self.qr_frame, textvariable=self.qr_link_var, wraplength=250).pack(padx=5, pady=5)
+        
+        # QR Code 圖片預留位置
+        self.qr_image_label = ttk.Label(self.qr_frame)
+        self.qr_image_label.pack(padx=5, pady=5)
         
     def setup_settings_tab(self):
         # 音樂檔案設定區域
