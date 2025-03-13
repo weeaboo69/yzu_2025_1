@@ -56,10 +56,10 @@ rdp_audio_files = {
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    #"ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    "ESP32_RDP_BLE",           # 輪子觸發控制器
-    "ESP32_MusicSensor_BLE"    # 歌單控制器
+    "ESP32_HornBLE",           # 喇叭控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_RDP_BLE",           # 輪子觸發控制器
+    #"ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
 # 特性UUID (需要與ESP32端匹配)
@@ -374,25 +374,86 @@ def process_data(device_name, data):
         if data[0] == 254:  # 播放指令 (開始彎曲)
             print(f"喇叭控制器: 偵測到彎曲開始, hornPlayed={hornPlayed}")
 
+            # 確保沒有其他音效正在播放
             if not hornPlayed:
-                stop_device_audio(device_name)  # 先停止任何正在播放的音效
-                play_device_music(device_name, horn_audio_file_before, loop=False)
+                # 先徹底停止任何可能正在播放的音效
+                stop_device_audio(device_name)
+                
+                # 強制終止其他可能存在的播放線程
+                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                    device_stop_flags[device_name] = True
+                    print("喇叭控制器: 等待先前的音效停止...")
+                    device_audio_threads[device_name].join(timeout=0.3)  # 等待線程結束
+                    device_audio_threads[device_name] = None  # 明確釋放線程引用
+                
+                # 確保標誌正確設置後再播放
+                device_stop_flags[device_name] = False
+                
                 print(f"喇叭控制器: 開始播放音效 {horn_audio_file_before}")
+                play_device_music(device_name, horn_audio_file_before, loop=False)
+                
                 # 標記已播放
                 hornPlayed = True
                 # 初始化最後的位置值
                 process_data.last_position = 0
                 # 重置模式切換狀態
                 horn_mode_switched = False
-                
+                    
         elif data[0] == 253:  # 停止指令 (停止彎曲)
             print(f"喇叭控制器: 偵測到彎曲結束")
-            # 停止所有喇叭相關音效
-            stop_device_audio(device_name)
-            # 重置 switch 狀態和播放標記
+            
+            # 立即設置停止標誌
+            device_stop_flags[device_name] = True
+            
+            # 堅決終止音訊播放線程
+            if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                try:
+                    # 強制終止線程
+                    import ctypes
+                    thread_id = device_audio_threads[device_name].ident
+                    if thread_id:
+                        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                            ctypes.c_long(thread_id), 
+                            ctypes.py_object(SystemExit)
+                        )
+                        if res > 1:
+                            ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                                ctypes.c_long(thread_id), 
+                                ctypes.c_long(0)
+                            )
+                            print("喇叭控制器: 無法強制終止線程，使用備用方法")
+                except Exception as e:
+                    print(f"嘗試強制終止線程時出錯: {e}")
+            
+            # 強制清空裝置的音訊線程引用
+            device_audio_threads[device_name] = None
+            
+            # 嘗試關閉全局共享的 PyAudio 資源
+            try:
+                # 創建新的 PyAudio 實例來重置音訊系統
+                p = pyaudio.PyAudio()
+                
+                # 創建並立即關閉一個音訊流，可能有助於刷新音訊系統
+                stream = p.open(format=p.get_format_from_width(2),
+                            channels=2,
+                            rate=44100,
+                            output=True)
+                stream.stop_stream()
+                stream.close()
+                p.terminate()
+            except Exception as e:
+                print(f"重置音訊系統時出錯: {e}")
+            
+            # 重置所有狀態標誌
             horn_mode_switched = False
             hornPlayed = False
-            print("喇叭控制器: 已重置模式狀態和播放標記")
+            device_stop_flags[device_name] = False
+            
+            # 清除緩存的位置值
+            if hasattr(process_data, 'last_position'):
+                delattr(process_data, 'last_position')
+            
+            print("喇叭控制器: 已徹底重置所有音效和狀態")
             
         else:
             position = data[0]  # 播放位置 (0-100)
@@ -401,19 +462,29 @@ def process_data(device_name, data):
             # 檢查是否是第一次偵測到值增加
             static_last_position = getattr(process_data, 'last_position', 0)
             
-            # 如果現在位置比上一次增加了10以上，且還沒有切換過模式，且已經在播放音效
-            if position < static_last_position - 20 and not horn_mode_switched and hornPlayed:
-                # 切換到 after 音效
-                horn_mode_switched = True
-                print("喇叭控制器: 偵測到彎曲程度增加超過10，切換到新音效")
-                # 停止當前播放並播放新音效
-                stop_device_audio(device_name)
-                play_device_music(device_name, horn_audio_file_after, loop=False)
-                hornPlayed = True
+            # 如果現在位置比上一次增加了20以上，且還沒有切換過模式，且已經在播放音效
+            if position < static_last_position - 9 and not horn_mode_switched and hornPlayed:
+                # 確保目前的音效真的在播放
+                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                    # 切換到 after 音效
+                    horn_mode_switched = True
+                    print("喇叭控制器: 偵測到彎曲程度增加超過20，切換到新音效")
+                    # 停止當前播放並播放新音效
+                    stop_device_audio(device_name)
+                    
+                    # 確保先前的音效真的停止了
+                    time.sleep(0.1)
+                    if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                        device_stop_flags[device_name] = True
+                        device_audio_threads[device_name].join(timeout=0.3)
+                        device_audio_threads[device_name] = None
+                    
+                    print(f"喇叭控制器: 播放新音效 {horn_audio_file_after}")
+                    play_device_music(device_name, horn_audio_file_after, loop=False)
+                    hornPlayed = True
             
             # 更新上次的位置值
             process_data.last_position = position
-
     elif device_name == "ESP32_Wheelspeed2_BLE":
         # 處理輪子速度控制器資料
         speed_str = data.decode('utf-8')
