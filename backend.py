@@ -57,9 +57,9 @@ rdp_audio_files = {
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     "ESP32_HornBLE",           # 喇叭控制器
-    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    #"ESP32_RDP_BLE",           # 輪子觸發控制器
-    #"ESP32_MusicSensor_BLE"    # 歌單控制器
+    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
 # 特性UUID (需要與ESP32端匹配)
@@ -252,6 +252,11 @@ def play_audio_once(device_name, file_path, speed=1.0):
         print(f"錯誤: 找不到預加載的音效檔案 {file_path}")
         return
     
+    # 提前檢查停止標誌
+    if device_stop_flags[device_name]:
+        print(f"{device_name} 播放被停止標誌阻止")
+        return
+    
     audio_data = loaded_audio_data[file_path]
     p = pyaudio.PyAudio()
     
@@ -261,55 +266,44 @@ def play_audio_once(device_name, file_path, speed=1.0):
     original_rate = audio_data['rate']
     frames = audio_data['frames']
     
-    # 開啟一個持續的音訊流，使用原始採樣率
+    # 開啟音訊流
     stream = p.open(format=p.get_format_from_width(original_format),
                    channels=original_channels,
-                   rate=original_rate,  # 使用原始採樣率
+                   rate=original_rate,
                    output=True)
     
-    # 設定較小的資料塊大小以減少延遲
-    chunk = 256  # 使用更小的塊，提高響應速度
+    # 使用適中的塊大小
+    chunk = 256
     
-    device_stop_flags[device_name] = False
-    
-    # 分段播放整個檔案
-    for i in range(0, len(frames), chunk * original_format * original_channels):
-        if device_stop_flags[device_name]:
-            break
+    try:
+        # 分段播放整個檔案
+        for i in range(0, len(frames), chunk * original_format * original_channels):
+            # 檢查停止標誌
+            if device_stop_flags[device_name]:
+                print(f"{device_name} 播放被中途停止")
+                break
+                
+            # 獲取當前塊的數據
+            chunk_data = frames[i:i + chunk * original_format * original_channels]
+            if len(chunk_data) == 0:
+                break
             
-        # 獲取當前塊的數據
-        chunk_data = frames[i:i + chunk * original_format * original_channels]
-        if len(chunk_data) == 0:
-            break
-        
-        # 獲取當前設定的播放速度 (而不是使用初始參數)
-        current_speed = device_playback_speeds[device_name]
-        
-        # 如果速度不是 1.0，則需要重新採樣
-        if current_speed != 1.0 and len(chunk_data) > 0:
-            # 轉換為 numpy 數組來處理
-            audio_array = np.frombuffer(chunk_data, dtype=np.int16)
-            
-            # 計算新的長度 (加速則縮短，減速則延長)
-            new_length = int(len(audio_array) / current_speed)
-            
-            # 確保新長度至少有一個樣本
-            new_length = max(1, new_length)
-            
-            # 使用 signal.resample 來改變速度
-            resampled_audio = signal.resample(audio_array, new_length)
-            
-            # 轉回 bytes 格式
-            chunk_data = resampled_audio.astype(np.int16).tobytes()
-        
-        # 播放處理後的音頻塊
-        stream.write(chunk_data)
-    
-    # 關閉資源
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-    print(f"{device_name} 單次音訊播放完成")
+            # 播放音頻塊
+            stream.write(chunk_data)
+    except Exception as e:
+        print(f"播放音訊時出錯: {e}")
+    finally:
+        # 釋放資源
+        try:
+            stream.stop_stream()
+            stream.close()
+        except:
+            pass
+        try:
+            p.terminate()
+        except:
+            pass
+        print(f"{device_name} 單次音訊播放完成")
 
 def stop_device_audio(device_name):
     """停止指定裝置正在播放的音訊"""
@@ -402,56 +396,31 @@ def process_data(device_name, data):
         elif data[0] == 253:  # 停止指令 (停止彎曲)
             print(f"喇叭控制器: 偵測到彎曲結束")
             
-            # 立即設置停止標誌
+            # 設置停止標誌
             device_stop_flags[device_name] = True
             
-            # 堅決終止音訊播放線程
-            if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                try:
-                    # 強制終止線程
-                    import ctypes
-                    thread_id = device_audio_threads[device_name].ident
-                    if thread_id:
-                        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                            ctypes.c_long(thread_id), 
-                            ctypes.py_object(SystemExit)
-                        )
-                        if res > 1:
-                            ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                                ctypes.c_long(thread_id), 
-                                ctypes.c_long(0)
-                            )
-                            print("喇叭控制器: 無法強制終止線程，使用備用方法")
-                except Exception as e:
-                    print(f"嘗試強制終止線程時出錯: {e}")
-            
-            # 強制清空裝置的音訊線程引用
-            device_audio_threads[device_name] = None
-            
-            # 嘗試關閉全局共享的 PyAudio 資源
-            try:
-                # 創建新的 PyAudio 實例來重置音訊系統
-                p = pyaudio.PyAudio()
+            # 最多嘗試5次停止
+            for attempt in range(5):
+                # 設置停止標誌
+                device_stop_flags[device_name] = True
                 
-                # 創建並立即關閉一個音訊流，可能有助於刷新音訊系統
-                stream = p.open(format=p.get_format_from_width(2),
-                            channels=2,
-                            rate=44100,
-                            output=True)
-                stream.stop_stream()
-                stream.close()
-                p.terminate()
-            except Exception as e:
-                print(f"重置音訊系統時出錯: {e}")
+                # 等待一小段時間
+                time.sleep(0.1)
+                
+                # 檢查線程是否還在運行
+                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                    print(f"喇叭控制器: 停止嘗試 {attempt+1}/5")
+                else:
+                    print("喇叭控制器: 音效已成功停止")
+                    break
+            
+            # 無論如何，都清空音訊線程引用
+            device_audio_threads[device_name] = None
             
             # 重置所有狀態標誌
             horn_mode_switched = False
             hornPlayed = False
             device_stop_flags[device_name] = False
-            
-            # 清除緩存的位置值
-            if hasattr(process_data, 'last_position'):
-                delattr(process_data, 'last_position')
             
             print("喇叭控制器: 已徹底重置所有音效和狀態")
             
@@ -463,7 +432,7 @@ def process_data(device_name, data):
             static_last_position = getattr(process_data, 'last_position', 0)
             
             # 如果現在位置比上一次增加了20以上，且還沒有切換過模式，且已經在播放音效
-            if position < static_last_position - 9 and not horn_mode_switched and hornPlayed:
+            if position < static_last_position - 8 and not horn_mode_switched and hornPlayed:
                 # 確保目前的音效真的在播放
                 if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
                     # 切換到 after 音效
