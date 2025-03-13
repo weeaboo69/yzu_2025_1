@@ -51,10 +51,10 @@ rdp_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    #"ESP32_HornBLE",           # 喇叭控制器
-    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    "ESP32_RDP_BLE",           # 輪子觸發控制器
-    #"ESP32_MusicSensor_BLE"    # 歌單控制器
+    "ESP32_HornBLE",           # 喇叭控制器
+    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_RDP_BLE",           # 輪子觸發控制器
+    "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
 # 特性UUID (需要與ESP32端匹配)
@@ -315,13 +315,26 @@ def stop_device_audio(device_name):
         print(f"已停止 {device_name} 的音訊播放")
     
     device_stop_flags[device_name] = False
+    
+    # 確保該裝置的音訊線程已經結束
+    device_audio_threads[device_name] = None
 
-def play_device_music(device_name, file_path, loop=True, speed=1.0):
+def play_device_music(device_name, file_path, loop=True, speed=1.0): 
     """開始為指定裝置播放音樂"""
-    global device_audio_threads, device_playback_speeds
+    global device_audio_threads, device_playback_speeds, current_playing_music
     
     # 先停止該裝置當前播放的音訊
     stop_device_audio(device_name)
+    
+    # 更新目前播放的音樂檔案信息
+    if device_name == "ESP32_MusicSensor_BLE":
+        # 通過文件路徑找出對應的音樂索引
+        for idx, path in music_files.items():
+            if path == file_path:
+                current_playing_music = idx
+                break
+    elif device_name == "ESP32_RDP_BLE" and file_path == rdp_audio_file:
+        current_playing_music = "RDP"
     
     # 設定初始速度
     device_playback_speeds[device_name] = speed
