@@ -47,13 +47,18 @@ music_files = {
     "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/2.wav",
     "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/3.wav"
 }
-rdp_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
+rdp_audio_files = {
+    "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_J.wav",  # 音樂1對應的RDP音效
+    "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_E.wav",  # 音樂2對應的RDP音效
+    "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav",  # 音樂3對應的RDP音效
+    "default": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"    # 默認的RDP音效
+}
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    "ESP32_HornBLE",           # 喇叭控制器
+    #"ESP32_HornBLE",           # 喇叭控制器
     "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    #"ESP32_RDP_BLE",           # 輪子觸發控制器
+    "ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
@@ -128,19 +133,20 @@ def preload_audio_files():
             print(f"加載 {file_path} 時發生錯誤: {e}")
     
     # 加載 RDP 音效
-    try:
-        wf = wave.open(rdp_audio_file, 'rb')
-        audio_data = {
-            'format': wf.getsampwidth(),
-            'channels': wf.getnchannels(),
-            'rate': wf.getframerate(),
-            'frames': wf.readframes(wf.getnframes())
-        }
-        loaded_audio_data[rdp_audio_file] = audio_data
-        wf.close()
-        print(f"已加載: {rdp_audio_file}")
-    except Exception as e:
-        print(f"加載 {rdp_audio_file} 時發生錯誤: {e}")
+    for key, file_path in rdp_audio_files.items():
+        try:
+            wf = wave.open(file_path, 'rb')
+            audio_data = {
+                'format': wf.getsampwidth(),
+                'channels': wf.getnchannels(),
+                'rate': wf.getframerate(),
+                'frames': wf.readframes(wf.getnframes())
+            }
+            loaded_audio_data[file_path] = audio_data
+            wf.close()
+            print(f"已加載 RDP 音效: {file_path}")
+        except Exception as e:
+            print(f"加載 {file_path} 時發生錯誤: {e}")
         
     # 加載 Wheel 音效
     try:
@@ -333,7 +339,7 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
             if path == file_path:
                 current_playing_music = idx
                 break
-    elif device_name == "ESP32_RDP_BLE" and file_path == rdp_audio_file:
+    elif device_name == "ESP32_RDP_BLE" and file_path == rdp_audio_files:
         current_playing_music = "RDP"
     
     # 設定初始速度
@@ -444,26 +450,34 @@ def process_data(device_name, data):
                 print(f"按鈕按下時長: {duration_sec:.2f} 秒")
                 
                 # 根據時長計算播放速度
-                # 小於1秒，速度為1
-                # 大於1秒小於2秒，速度為1.5
-                # 大於2秒，速度為2.0
                 speed = 1.0
                 if duration_sec > 1.0 and duration_sec <= 2.0:
                     speed = 0.75
                 elif duration_sec > 2.0:
                     speed = 0.5
+                
+                # 根據當前播放的音樂選擇對應的RDP音效
+                rdp_file_to_play = rdp_audio_files.get("default")
+                if current_playing_music in ["1", "2", "3"]:
+                    rdp_file_to_play = rdp_audio_files.get(current_playing_music, rdp_audio_files["default"])
                     
-                print(f"RDP 按鈕已觸發，播放音效，速度: {speed}")
+                print(f"RDP 按鈕已觸發，播放對應音效: {rdp_file_to_play}，速度: {speed}")
                 # 單次播放 RDP 音效，使用計算出的速度
-                play_device_music(device_name, rdp_audio_file, loop=False, speed=speed)
+                play_device_music(device_name, rdp_file_to_play, loop=False, speed=speed)
                 
             except (ValueError, IndexError) as e:
                 print(f"解析按鈕時長出錯: {e}")
         elif command_str == "WHEEL_TRIGGER":
             # 保留原有的處理邏輯，以防舊版程式還會發送此命令
             print("RDP 按鈕已觸發，播放音效")
+            
+            # 根據當前播放的音樂選擇對應的RDP音效
+            rdp_file_to_play = rdp_audio_files.get("default")
+            if current_playing_music in ["1", "2", "3"]:
+                rdp_file_to_play = rdp_audio_files.get(current_playing_music, rdp_audio_files["default"])
+                
             # 單次播放 RDP 音效
-            play_device_music(device_name, rdp_audio_file, loop=False)
+            play_device_music(device_name, rdp_file_to_play, loop=False)
 
     elif device_name == "ESP32_MusicSensor_BLE":
         # 處理歌單控制器資料
@@ -557,10 +571,11 @@ def set_music_file_path(index, new_path):
     return False
 
 # 設置RDP音效文件路徑
-def set_rdp_audio_file_path(new_path):
-    global rdp_audio_file
+def set_rdp_audio_file_path(key, new_path):
+    """設置特定 RDP 音效文件路徑"""
+    global rdp_audio_files
     if os.path.exists(new_path):
-        rdp_audio_file = new_path
+        rdp_audio_files[key] = new_path
         # 重新加載音頻文件
         try:
             wf = wave.open(new_path, 'rb')
@@ -572,7 +587,7 @@ def set_rdp_audio_file_path(new_path):
             }
             loaded_audio_data[new_path] = audio_data
             wf.close()
-            log_message(f"已更新並加載RDP音效: {new_path}")
+            log_message(f"已更新並加載 RDP 音效 {key}: {new_path}")
             return True
         except Exception as e:
             log_message(f"加載 {new_path} 時發生錯誤: {e}")
@@ -620,7 +635,7 @@ def test_play_music(index, loop=True):
         play_device_music(music_files[index], loop)
         return True
     elif index == "RDP":
-        play_device_music(rdp_audio_file, loop=False)
+        play_device_music(rdp_audio_files, loop=False)
         return True
     return False
 
