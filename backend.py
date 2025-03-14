@@ -266,11 +266,16 @@ def play_audio_once(device_name, file_path, speed=1.0):
     original_rate = audio_data['rate']
     frames = audio_data['frames']
     
-    # 開啟音訊流
+    # 調整播放速率根據速度參數
+    adjusted_rate = int(original_rate * speed)
+    
+    # 開啟音訊流，使用調整後的播放率
     stream = p.open(format=p.get_format_from_width(original_format),
                    channels=original_channels,
-                   rate=original_rate,
+                   rate=adjusted_rate,  # 使用調整後的播放率
                    output=True)
+    
+    print(f"{device_name} 單次播放速度設定為: {speed}, 調整後播放率: {adjusted_rate}")
     
     # 使用適中的塊大小
     chunk = 256
