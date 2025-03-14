@@ -56,9 +56,9 @@ rdp_audio_files = {
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    "ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    #"ESP32_HornBLE",           # 喇叭控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
@@ -520,22 +520,31 @@ def process_data(device_name, data):
             play_device_music(device_name, rdp_file_to_play, loop=False)
 
     elif device_name == "ESP32_MusicSensor_BLE":
-        # 處理歌單控制器資料
+    # 處理歌單控制器資料
         command = data.decode('utf-8')
         print(f"歌單控制器: 收到命令 {command}")
         
         # 根據命令選擇並播放對應的音樂
-        if command == "SELECT_MUSIC_1":
-            print("切換到音樂1")
+        if command == "PLAY_MUSIC_1":
+            print("開始播放音樂1")
             play_device_music(device_name, music_files["1"], loop=True)
+        elif command == "STOP_MUSIC_1":
+            print("停止播放音樂1")
+            stop_device_audio(device_name)
         
-        elif command == "SELECT_MUSIC_2":
-            print("切換到音樂2")
+        elif command == "PLAY_MUSIC_2":
+            print("開始播放音樂2")
             play_device_music(device_name, music_files["2"], loop=True)
+        elif command == "STOP_MUSIC_2":
+            print("停止播放音樂2")
+            stop_device_audio(device_name)
         
-        elif command == "SELECT_MUSIC_3":
-            print("切換到音樂3")
+        elif command == "PLAY_MUSIC_3":
+            print("開始播放音樂3")
             play_device_music(device_name, music_files["3"], loop=True)
+        elif command == "STOP_MUSIC_3":
+            print("停止播放音樂3")
+            stop_device_audio(device_name)
 
 # 回調函數，處理來自裝置的通知
 def notification_handler(uuid):
