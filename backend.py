@@ -331,6 +331,15 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
     # 先停止該裝置當前播放的音訊
     stop_device_audio(device_name)
     
+    # 確保前一個音訊真的停止了
+    if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+        device_stop_flags[device_name] = True
+        device_audio_threads[device_name].join(timeout=0.3)  # 等待最多 0.3 秒
+        device_audio_threads[device_name] = None
+    
+    # 重置停止標誌
+    device_stop_flags[device_name] = False
+    
     # 更新目前播放的音樂檔案信息
     if device_name == "ESP32_MusicSensor_BLE":
         # 通過文件路徑找出對應的音樂索引
