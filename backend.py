@@ -500,16 +500,6 @@ def process_data(device_name, data):
                     print("開始撥放順時針的音效")
                     stop_device_audio(device_name)
                     play_device_music(device_name, wheel_audio_file["2"], loop=False)
-                #speed = float(speed_str)
-                #print(f"輪子速度控制器: 接收到速度值 {speed}")
-                
-                # 如果當前沒有播放音訊，則開始播放
-                #    print(f"開始以速度 {speed} 播放wheel音效")
-                #    play_device_music(device_name, wheel_audio_file, loop=True, speed=speed)
-                #else:
-                #    # 更新播放速度
-                #    print(f"更新播放速度為 {speed} (之前為 {device_playback_speeds[device_name]})")
-                #    device_playback_speeds[device_name] = speed
             except ValueError:
                 print(f"輪子速度控制器: 無法解析資料 {speed_str}")
 
