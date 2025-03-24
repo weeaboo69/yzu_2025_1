@@ -41,7 +41,11 @@ loaded_audio_data = {}
 
 horn_audio_file_before = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_before.wav"  # 切換前的喇叭音效
 horn_audio_file_after = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_after.wav"   # 切換後的喇叭音效
-wheel_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound.wav"  
+wheel_audio_file = {
+    "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound_before.wav",
+    "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound_after.wav",
+    "OG": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound.wav"
+}   
 music_files = {
     "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/1.wav",
     "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/2.wav",
@@ -488,17 +492,24 @@ def process_data(device_name, data):
             stop_device_audio(device_name)
         else:
             try:
-                speed = float(speed_str)
-                print(f"輪子速度控制器: 接收到速度值 {speed}")
+                if speed_str == "gjp4":
+                    if not device_audio_threads[device_name] or not device_audio_threads[device_name].is_alive():
+                        print("開始撥放順時針的音效")
+                        play_device_music(device_name, rdp_audio_files["1"], loop=False)
+                elif speed_str == "su4":
+                    if not device_audio_threads[device_name] or not device_audio_threads[device_name].is_alive():
+                        print("開始撥放順時針的音效")
+                        play_device_music(device_name, rdp_audio_files["2"], loop=False)
+                #speed = float(speed_str)
+                #print(f"輪子速度控制器: 接收到速度值 {speed}")
                 
                 # 如果當前沒有播放音訊，則開始播放
-                if not device_audio_threads[device_name] or not device_audio_threads[device_name].is_alive():
-                    print(f"開始以速度 {speed} 播放wheel音效")
-                    play_device_music(device_name, wheel_audio_file, loop=True, speed=speed)
-                else:
-                    # 更新播放速度
-                    print(f"更新播放速度為 {speed} (之前為 {device_playback_speeds[device_name]})")
-                    device_playback_speeds[device_name] = speed
+                #    print(f"開始以速度 {speed} 播放wheel音效")
+                #    play_device_music(device_name, wheel_audio_file, loop=True, speed=speed)
+                #else:
+                #    # 更新播放速度
+                #    print(f"更新播放速度為 {speed} (之前為 {device_playback_speeds[device_name]})")
+                #    device_playback_speeds[device_name] = speed
             except ValueError:
                 print(f"輪子速度控制器: 無法解析資料 {speed_str}")
 
