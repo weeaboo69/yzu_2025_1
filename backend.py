@@ -57,10 +57,14 @@ rdp_audio_files = {
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     "ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
+
+is_recording = False
+recording_thread = None
+audio_recording = None
 
 # 特性UUID (需要與ESP32端匹配)
 SERVICE_UUID = "180F"
@@ -232,6 +236,8 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
             chunk_data = original_frames[i:i + chunk * audio_data['format'] * audio_data['channels']]
             if len(chunk_data) > 0:
                 stream.write(chunk_data)
+                if is_recording:
+                    audio_buffer.append(chunk_data)
         
         # 關閉流，準備下一次迭代
         stream.stop_stream()
@@ -295,6 +301,8 @@ def play_audio_once(device_name, file_path, speed=1.0):
             
             # 播放音頻塊
             stream.write(chunk_data)
+            if is_recording:
+                audio_buffer.append(chunk_data)
     except Exception as e:
         print(f"播放音訊時出錯: {e}")
     finally:
@@ -706,6 +714,82 @@ def test_play_music(index, loop=True):
 def get_current_playing_music():
     return current_playing_music
 
+def start_recording():
+    """開始直接捕獲程式播放的音訊數據"""
+    global is_recording, recording_thread
+    
+    if is_recording:
+        log_message("錄音已經在進行中")
+        return
+    
+    # 設置錄音標誌
+    is_recording = True
+    log_message("開始錄製程式音訊...")
+    
+    # 創建時間戳記
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    filename = f"recording_{timestamp}.wav"
+    
+    # 創建音訊錄製線程
+    recording_thread = threading.Thread(target=record_audio_stream, args=(filename,))
+    recording_thread.daemon = True
+    recording_thread.start()
+
+def stop_recording():
+    """停止錄製程式播放的音訊"""
+    global is_recording
+    
+    if not is_recording:
+        log_message("目前沒有進行錄音")
+        return
+    
+    # 設置停止錄音標誌
+    is_recording = False
+    log_message("停止錄音，正在儲存檔案...")
+    
+    # 等待錄音線程結束
+    if recording_thread and recording_thread.is_alive():
+        recording_thread.join(timeout=2.0)
+
+def record_audio_stream(filename):
+    """直接捕獲和儲存程式產生的音訊數據"""
+    global is_recording, audio_buffer
+    
+    try:
+        # 創建 WAV 文件
+        audio_buffer = []
+        
+        # 記錄開始時間
+        start_time = time.time()
+        
+        # 持續收集音訊數據，直到停止錄音
+        while is_recording:
+            # 短暫休眠，避免 CPU 使用率過高
+            time.sleep(0.01)
+            
+        # 錄音結束後，將收集到的數據寫入文件
+        if audio_buffer:
+            # 假設所有音訊數據有相同的格式
+            sample_format = 2  # 16位整數
+            channels = 2       # 立體聲
+            sample_rate = 44100  # 採樣率
+            
+            wf = wave.open(filename, 'wb')
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_format)
+            wf.setframerate(sample_rate)
+            
+            for audio_chunk in audio_buffer:
+                wf.writeframes(audio_chunk)
+            
+            wf.close()
+            log_message(f"錄音已完成並儲存為 {filename}")
+        else:
+            log_message("沒有捕獲到音訊數據")
+        
+    except Exception as e:
+        log_message(f"錄音過程中發生錯誤: {e}")
+        is_recording = False
 if __name__ == "__main__":
     # 執行主函數
     asyncio.run(start_bluetooth_service())
