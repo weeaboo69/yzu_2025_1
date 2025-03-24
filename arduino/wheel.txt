@@ -216,3 +216,59 @@ if (isPlaying && (currentTime - lastActivityTime > INACTIVITY_TIMEOUT)) {
 
   delay(100);  // 避免列印太快，可依需求微調
 }
+
+
+
+-------------新的-----------------
+
+
+
+#include "BluetoothSerial.h"
+
+BluetoothSerial SerialBT;
+#define SENSOR_A 15
+#define SENSOR_B 18
+#define SENSOR_C 19
+#define SENSOR_D 21
+
+volatile int lastTriggered = -1;
+volatile int secondLastTriggered = -1;
+
+void IRAM_ATTR sensorTriggered(int sensorID) {
+    secondLastTriggered = lastTriggered;
+    lastTriggered = sensorID;
+
+    
+
+    if (secondLastTriggered != -1) {
+        if ((secondLastTriggered == SENSOR_A && lastTriggered == SENSOR_B) ||
+            (secondLastTriggered == SENSOR_B && lastTriggered == SENSOR_C) ||
+            (secondLastTriggered == SENSOR_C && lastTriggered == SENSOR_D) ||
+            (secondLastTriggered == SENSOR_D && lastTriggered == SENSOR_A)) {
+            Serial.println("順時針旋轉");
+        } else if ((secondLastTriggered == SENSOR_A && lastTriggered == SENSOR_D) ||
+                   (secondLastTriggered == SENSOR_D && lastTriggered == SENSOR_C) ||
+                   (secondLastTriggered == SENSOR_C && lastTriggered == SENSOR_B) ||
+                   (secondLastTriggered == SENSOR_B && lastTriggered == SENSOR_A)) {
+            Serial.println("逆時針旋轉");
+        }
+    }
+}
+
+void setup() {
+    Serial.begin(9600);
+    
+    pinMode(SENSOR_A, INPUT_PULLUP);
+    pinMode(SENSOR_B, INPUT_PULLUP);
+    pinMode(SENSOR_C, INPUT_PULLUP);
+    pinMode(SENSOR_D, INPUT_PULLUP);
+
+    attachInterrupt(digitalPinToInterrupt(SENSOR_A), [](){ sensorTriggered(SENSOR_A); }, FALLING);
+    attachInterrupt(digitalPinToInterrupt(SENSOR_B), [](){ sensorTriggered(SENSOR_B); }, FALLING);
+    attachInterrupt(digitalPinToInterrupt(SENSOR_C), [](){ sensorTriggered(SENSOR_C); }, FALLING);
+    attachInterrupt(digitalPinToInterrupt(SENSOR_D), [](){ sensorTriggered(SENSOR_D); }, FALLING);
+}
+
+void loop() {
+    // 主要邏輯已經在中斷函式處理，loop 可以保持空白或加其他功能
+}
