@@ -1,0 +1,218 @@
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+// 定義 BLE 相關 UUID
+#define SERVICE_UUID        "180F" // 使用標準的電池服務 UUID
+#define CHARACTERISTIC_UUID "2A19" // 使用標準的電池等級特性 UUID
+
+// 假設霍爾感測器接在 GPIO 4
+const int hallSensorPin = 34;
+const unsigned long NOISE_THRESHOLD = 500;
+volatile unsigned long lastTriggerTime = 0;   // 上一次觸發的時間 (micros)
+volatile unsigned long currentInterval = 0;   // 這次(最新) 兩次脈衝間的時間
+volatile unsigned long previousInterval = 0;  // 上一次(舊) 的兩次脈衝間的時間
+
+volatile bool newPulseAvailable = false;
+// 這是你要根據快慢來調整的「音樂速度」變數
+float musicSpeed = 1.0;      // 初始速度為 1
+const float speedMax = 5.0;  // 速度上限
+const float speedMin = 1.0;  // 速度下限 (你說「不再變慢」可以是 1)
+
+// 每次速度調整的增量或減量
+const float speedStep = 0.5;
+
+// BLE 相關變數
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+unsigned long lastSendTime = 0;
+unsigned long lastActivityTime = 0;  // 最後一次感測器觸發的時間
+const int SEND_INTERVAL = 50;  // 發送間隔(毫秒)
+const int INACTIVITY_TIMEOUT = 3000;  // 停止音檔的超時時間(毫秒)
+bool isPlaying = true;  // 追蹤播放狀態
+
+// 連接狀態回調
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      Serial.println("裝置已連接");
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      Serial.println("裝置已斷開連接");
+    }
+};
+
+// 中斷服務程式 (ISR)
+void IRAM_ATTR handleHallSensor() {
+  unsigned long nowTime = micros();  // 取得目前時間 (μs)
+
+  // 若不是第一次觸發 (lastTriggerTime != 0)，才能計算間隔
+  if (lastTriggerTime != 0) {
+    unsigned long interval = nowTime - lastTriggerTime;
+
+    // 加入雜訊過濾：若 interval 太小，視為雜訊，忽略
+    if (interval > NOISE_THRESHOLD) {
+      // 先把 currentInterval 的舊值搬到 previousInterval
+      previousInterval = currentInterval;
+      // 再更新 currentInterval 為這次計算的間隔
+      currentInterval = interval;
+
+      // 通知主程式 loop()：有新脈衝間隔可比較
+      newPulseAvailable = true;
+      
+      // 更新最後活動時間 (在 ISR 中只能設置 volatile 變數，詳細處理在 loop 中進行)
+      lastActivityTime = millis();
+    }
+  }
+
+  // 更新 lastTriggerTime 為本次觸發時間
+  lastTriggerTime = nowTime;
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(hallSensorPin, INPUT_PULLUP);
+
+  // 註冊外部中斷：偵測從 LOW -> HIGH (可依感測器輸出形式調整 RISING / FALLING)
+  attachInterrupt(digitalPinToInterrupt(hallSensorPin), handleHallSensor, RISING);
+  
+  // 初始化最後活動時間
+  lastActivityTime = millis();
+  
+  Serial.println("=== ESP32 Hall Sensor Speed Demo (BLE Mode) ===");
+
+  // 初始化 BLE
+  BLEDevice::init("ESP32_Wheelspeed2_BLE");
+  
+  // 建立 BLE 服務器
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  
+  // 建立 BLE 服務
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  // 建立 BLE 特性
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+  
+  // 添加描述符
+  pCharacteristic->addDescriptor(new BLE2902());
+  
+  // 啟動服務
+  pService->start();
+  
+  // 啟動廣播
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // iPhone 連接參數
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+  
+  Serial.println("BLE 已啟動，等待連接...");
+}
+
+void loop() {
+  // 為避免讀取 intervalTime 的同時，ISR 正在更新，使用 noInterrupts()/interrupts() 保護
+  // 先複製 volatile 變數到區域變數，避免讀寫衝突
+  noInterrupts();
+  bool pulseFlag = newPulseAvailable;       // 是否有新脈衝可比較
+  unsigned long ci = currentInterval;       // 複製目前間隔
+  unsigned long pi = previousInterval;      // 複製上一個間隔
+  newPulseAvailable = false;               // 取完後清除旗標，避免重複處理
+  interrupts();
+
+  // 若有新脈衝且間隔都有效 (不為 0)
+  if (pulseFlag && ci > 0 && pi > 0) {
+    // 比較本次 (ci) 與上次 (pi)
+    if (ci < pi) {
+      // 本次間隔更小 => 轉速更快 => musicSpeed + step
+      musicSpeed += speedStep;
+      if (musicSpeed > speedMax) musicSpeed = speedMax;
+      Serial.println("更快 -> 加速");
+    } 
+    else if (ci > pi) {
+      // 本次間隔更大 => 轉速更慢 => musicSpeed - step
+      musicSpeed -= speedStep;
+      if (musicSpeed < speedMin) musicSpeed = speedMin;
+      Serial.println("更慢 -> 減速");
+    } 
+    else {
+      // ci == pi => 幾乎相同速度
+      Serial.println("速度大致相同 -> 不變");
+    }
+
+    // 印出測量結果
+    Serial.print("previousInterval = ");
+    Serial.print(pi);
+    Serial.print(" us, currentInterval = ");
+    Serial.print(ci);
+    Serial.print(" us, musicSpeed = ");
+    Serial.println(musicSpeed);
+  }
+
+  // 檢查感測器超時
+  unsigned long currentTime = millis();
+  
+  // 檢查是否超過三秒沒有觸發
+if (isPlaying && (currentTime - lastActivityTime > INACTIVITY_TIMEOUT)) {
+  if (deviceConnected) {
+    // 發送停止播放的指令
+    const char* stopCmd = "STOP_PLAYBACK";
+    pCharacteristic->setValue((uint8_t*)stopCmd, strlen(stopCmd));
+    pCharacteristic->notify();
+    Serial.println("超過三秒沒有觸發，發送停止播放指令");
+    isPlaying = false;  // 更新播放狀態
+    
+    // 重置速度為初始值 1.0
+    previousInterval = 0;
+    musicSpeed = 1.0;
+    Serial.println("播放速度已重置為 1.0");
+  }
+} else if (!isPlaying && (currentTime - lastActivityTime <= INACTIVITY_TIMEOUT)) {
+  // 如果之前停止播放，但現在有活動，則重新設置為播放狀態
+  isPlaying = true;
+}
+  
+  // 定期透過 BLE 發送速度值
+  if (deviceConnected && currentTime - lastSendTime >= SEND_INTERVAL) {
+    // 如果是播放狀態，發送速度值；如果不是，則不發送
+    if (isPlaying) {
+      // 將速度值轉換為字符串
+      char speedStr[10];
+      sprintf(speedStr, "%.2f", musicSpeed);
+      
+      // 發送速度值
+      pCharacteristic->setValue((uint8_t*)speedStr, strlen(speedStr));
+      pCharacteristic->notify();
+    }
+    
+    lastSendTime = currentTime;
+  }
+  
+  // 處理 BLE 重新連接
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500); // 等待 BLE 堆疊準備好
+    pServer->startAdvertising(); // 重新開始廣播
+    Serial.println("開始重新廣播");
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  // 處理 BLE 新連接
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+  }
+
+  delay(100);  // 避免列印太快，可依需求微調
+}
