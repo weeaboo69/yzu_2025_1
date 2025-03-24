@@ -161,19 +161,20 @@ def preload_audio_files():
             print(f"加載 {file_path} 時發生錯誤: {e}")
         
     # 加載 Wheel 音效
-    try:
-        wf = wave.open(wheel_audio_file, 'rb')
-        audio_data = {
-            'format': wf.getsampwidth(),
-            'channels': wf.getnchannels(),
-            'rate': wf.getframerate(),
-            'frames': wf.readframes(wf.getnframes())
-        }
-        loaded_audio_data[wheel_audio_file] = audio_data
-        wf.close()
-        print(f"已加載: {wheel_audio_file}")
-    except Exception as e:
-        print(f"加載 {wheel_audio_file} 時發生錯誤: {e}")
+    for key, file_path in rdp_audio_files.items():
+        try:
+            wf = wave.open(file_path, 'rb')
+            audio_data = {
+                'format': wf.getsampwidth(),
+                'channels': wf.getnchannels(),
+                'rate': wf.getframerate(),
+                'frames': wf.readframes(wf.getnframes())
+            }
+            loaded_audio_data[file_path] = audio_data
+            wf.close()
+            print(f"已加載: {file_path}")
+        except Exception as e:
+            print(f"加載 {file_path} 時發生錯誤: {e}")
     try:
         wf = wave.open(horn_audio_file_before, 'rb')
         audio_data = {
@@ -497,7 +498,7 @@ def process_data(device_name, data):
                     stop_device_audio(device_name)
                     play_device_music(device_name, wheel_audio_file["1"], loop=False)
                 elif speed_str == "su4":
-                    print("開始撥放順時針的音效")
+                    print("開始撥放逆時針的音效")
                     stop_device_audio(device_name)
                     play_device_music(device_name, wheel_audio_file["2"], loop=False)
             except ValueError:
