@@ -7,8 +7,15 @@
 #define SERVICE_UUID        "180F" // 使用標準的電池服務 UUID
 #define CHARACTERISTIC_UUID "2A19" // 使用標準的電池等級特性 UUID
 
-const int BUTTON_PIN = 13;
-bool lastButtonState = false;
+const int BUTTON_PIN = 13;  // 原有按鈕
+const int BUTTON_PIN2 = 12; // 新增按鈕2
+const int BUTTON_PIN3 = 14; // 新增按鈕3
+
+bool lastButtonState = false;   // 原有按鈕狀態
+bool lastButton2State = false;  // 按鈕2狀態
+bool lastButton3State = false;  // 按鈕3狀態
+bool button3IsPlaying = false;  // 記錄按鈕3是否正在播放循環音效
+
 unsigned long buttonPressStartTime = 0;  // 按鈕按下開始時間
 bool buttonWasPressed = false;  // 按鈕是否已被按下
 
@@ -32,7 +39,9 @@ class MyServerCallbacks: public BLEServerCallbacks {
 
 void setup() {
   Serial.begin(9600);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);  // 原有按鈕
+  pinMode(BUTTON_PIN2, INPUT_PULLUP); // 新增按鈕2
+  pinMode(BUTTON_PIN3, INPUT_PULLUP); // 新增按鈕3
   Serial.println("輪子控制器已啟動 (BLE 模式)");
   
   // 初始化 BLE
@@ -72,32 +81,79 @@ void setup() {
 }
 
 void loop() {
-  bool buttonPressed = !digitalRead(BUTTON_PIN);
+  bool buttonPressed = !digitalRead(BUTTON_PIN);   // 原有按鈕
+  bool button2Pressed = !digitalRead(BUTTON_PIN2); // 新增按鈕2
+  bool button3Pressed = !digitalRead(BUTTON_PIN3); // 新增按鈕3
   
-  // 按鈕從放開變為按下時，記錄開始時間
+  // 原有按鈕邏輯（保持不變）
   if (buttonPressed && !lastButtonState) {
-    Serial.println("按鈕按下");
-    buttonPressStartTime = millis();  // 記錄按下開始時間
+    Serial.println("按鈕1按下");
+    buttonPressStartTime = millis();
     buttonWasPressed = true;
   }
   
-  // 按鈕從按下變為放開時，計算按下時長並發送
   if (!buttonPressed && lastButtonState && buttonWasPressed) {
-    Serial.println("按鈕放開");
-    unsigned long pressDuration = millis() - buttonPressStartTime;  // 計算按下時長(毫秒)
+    Serial.println("按鈕1放開");
+    unsigned long pressDuration = millis() - buttonPressStartTime;
     
     if (deviceConnected) {
-      // 發送按下時長（轉換為字串）
       String commandStr = "BUTTON_DURATION:" + String(pressDuration);
       pCharacteristic->setValue(commandStr);
       pCharacteristic->notify();
       Serial.println("發送按鈕按下時長: " + String(pressDuration) + " ms");
     }
     
-    buttonWasPressed = false;  // 重置按鈕狀態
+    buttonWasPressed = false;
   }
   
-  lastButtonState = buttonPressed;  // 更新前一個狀態
+  // 按鈕2邏輯：按下播放RDP_2_before，放開播放RDP_2_after
+  if (button2Pressed && !lastButton2State) {
+    Serial.println("按鈕2按下");
+    if (deviceConnected) {
+      const char* commandStr = "BUTTON2_PRESSED";
+      pCharacteristic->setValue(commandStr);
+      pCharacteristic->notify();
+      Serial.println("發送按鈕2按下命令");
+    }
+  }
+  
+  if (!button2Pressed && lastButton2State) {
+    Serial.println("按鈕2放開");
+    if (deviceConnected) {
+      const char* commandStr = "BUTTON2_RELEASED";
+      pCharacteristic->setValue(commandStr);
+      pCharacteristic->notify();
+      Serial.println("發送按鈕2放開命令");
+    }
+  }
+  
+  // 按鈕3邏輯：按下循環播放RDP_3_before，放開播放一次RDP_3_after
+  if (button3Pressed && !lastButton3State) {
+    Serial.println("按鈕3按下");
+    if (deviceConnected) {
+      const char* commandStr = "BUTTON3_PRESSED";
+      pCharacteristic->setValue(commandStr);
+      pCharacteristic->notify();
+      Serial.println("發送按鈕3按下命令 (開始循環播放)");
+      button3IsPlaying = true;
+    }
+  }
+  
+  if (!button3Pressed && lastButton3State) {
+    Serial.println("按鈕3放開");
+    if (deviceConnected) {
+      const char* commandStr = "BUTTON3_RELEASED";
+      pCharacteristic->setValue(commandStr);
+      pCharacteristic->notify();
+      Serial.println("發送按鈕3放開命令 (播放結束音效)");
+      button3IsPlaying = false;
+    }
+  }
+  
+  // 更新所有按鈕的狀態
+  lastButtonState = buttonPressed;
+  lastButton2State = button2Pressed;
+  lastButton3State = button3Pressed;
   
   // 處理重新連接
   if (!deviceConnected && oldDeviceConnected) {
