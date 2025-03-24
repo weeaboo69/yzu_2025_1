@@ -495,11 +495,11 @@ def process_data(device_name, data):
                 if speed_str == "gjp4":
                     if not device_audio_threads[device_name] or not device_audio_threads[device_name].is_alive():
                         print("開始撥放順時針的音效")
-                        play_device_music(device_name, rdp_audio_files["1"], loop=False)
+                        play_device_music(device_name, wheel_audio_file["1"], loop=False)
                 elif speed_str == "su4":
                     if not device_audio_threads[device_name] or not device_audio_threads[device_name].is_alive():
                         print("開始撥放順時針的音效")
-                        play_device_music(device_name, rdp_audio_files["2"], loop=False)
+                        play_device_music(device_name, wheel_audio_file["2"], loop=False)
                 #speed = float(speed_str)
                 #print(f"輪子速度控制器: 接收到速度值 {speed}")
                 
