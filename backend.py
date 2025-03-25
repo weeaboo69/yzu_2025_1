@@ -20,7 +20,8 @@ import os
 import pickle
 
 current_playing_music = None  # 目前正在播放的音樂編號
-STORAGE_DIR = "C:/Users/maboo/yzu_2025/yzu_2025_1/recording"
+audio_buffer = []  # 新增這一行
+STORAGE_DIR = r"C:\Users\maboo\yzu_2025\yzu_2025_1\recording"
 if not os.path.exists(STORAGE_DIR):
     os.makedirs(STORAGE_DIR)
 
@@ -154,6 +155,33 @@ def authenticate_google_drive():
 def upload_to_google_drive(file_path):
     """上傳文件到 Google Drive 並設置為公開可訪問"""
     try:
+        # 正規化路徑
+        file_path = os.path.normpath(file_path)
+        
+        # 確認檔案存在
+        if not os.path.exists(file_path):
+            log_message(f"上傳錯誤: 找不到檔案 {file_path}")
+            
+            # 嘗試在替代位置尋找檔案
+            filename = os.path.basename(file_path)
+            alternative_locations = [
+                r"C:\Users\maboo\yzu_2025\yzu_2025_1",
+                os.getcwd(),
+                STORAGE_DIR
+            ]
+            
+            for location in alternative_locations:
+                alternative_path = os.path.join(location, filename)
+                if os.path.exists(alternative_path):
+                    log_message(f"在替代位置找到檔案: {alternative_path}")
+                    file_path = alternative_path
+                    break
+            else:
+                log_message("在所有可能的位置皆找不到檔案，無法上傳")
+                return None
+            
+        log_message(f"開始上傳檔案: {file_path}")
+        
         # 認證並構建服務
         creds = authenticate_google_drive()
         service = build('drive', 'v3', credentials=creds)
@@ -186,12 +214,17 @@ def upload_to_google_drive(file_path):
         ).execute()
         
         download_link = file.get('webViewLink')
-        log_message(f"已上傳檔案到 Google Drive，下載連結: {download_link}")
+        log_message(f"已成功上傳檔案到 Google Drive，下載連結: {download_link}")
         
         return download_link
         
     except Exception as e:
         log_message(f"上傳到 Google Drive 時發生錯誤: {e}")
+        
+        # 提供更詳細的錯誤信息
+        import traceback
+        log_message(f"詳細錯誤信息: {traceback.format_exc()}")
+        
         return None
 
 def generate_qr_code(url, filename="download_link"):
@@ -337,6 +370,7 @@ def preload_audio_files():
 def play_audio_loop(device_name, file_path, initial_speed=1.0):
     """使用預加載的資料循環播放音訊，支援速度控制"""
     global device_stop_flags, device_playback_speeds
+    global audio_buffer
     
     if file_path not in loaded_audio_data:
         print(f"錯誤: 找不到預加載的音效檔案 {file_path}")
@@ -397,6 +431,7 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
 def play_audio_once(device_name, file_path, speed=1.0):
     """使用預加載的資料播放音訊一次，支援即時速度控制"""
     global device_stop_flags
+    global audio_buffer
     
     if file_path not in loaded_audio_data:
         print(f"錯誤: 找不到預加載的音效檔案 {file_path}")
@@ -892,11 +927,14 @@ def get_current_playing_music():
 
 def start_recording():
     """開始直接捕獲程式播放的音訊數據"""
-    global is_recording, recording_thread
+    global is_recording, recording_thread, audio_buffer
     
     if is_recording:
         log_message("錄音已經在進行中")
         return
+    
+    # 清空並重新初始化錄音緩衝區
+    audio_buffer = []
     
     # 設置錄音標誌
     is_recording = True
@@ -932,7 +970,7 @@ def stop_recording():
         ui_update_callback("錄音已完成，正在處理並上傳...")
 
 def record_audio_stream(filename):
-    """直接捕獲和儲存程式產生的音訊數據，上傳並生成QR碼"""
+    """直接捕獲和儲存程式產生的音訊數據"""
     global is_recording, audio_buffer
     
     try:
@@ -940,28 +978,25 @@ def record_audio_stream(filename):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         base_filename = f"recording_{timestamp}"
         full_filename = f"{base_filename}.wav"
-        file_path = os.path.join(STORAGE_DIR, full_filename)
         
-        # 創建 WAV 文件
-        audio_buffer = []
+        # 使用更可靠的路徑（當前工作目錄）
+        file_path = os.path.join(os.getcwd(), full_filename)
+        file_path = os.path.normpath(file_path)
         
-        # 記錄開始時間
-        start_time = time.time()
+        log_message(f"錄音將儲存至: {file_path}")
         
         # 持續收集音訊數據，直到停止錄音
         while is_recording:
-            # 短暫休眠，避免 CPU 使用率過高
             time.sleep(0.01)
             
         # 錄音結束後，將收集到的數據寫入文件
         if audio_buffer:
-            # 在存檔時使用與播放相同的參數
+            # 假設所有音訊數據有相同的格式
             sample_format = 2  # 16位整數
             channels = 2       # 立體聲
-            # 如果播放時有改變採樣率，這裡也應該使用相同的值
-            sample_rate = 44100  # 確保這與播放時的採樣率一致
+            sample_rate = 44100  # 採樣率
             
-            wf = wave.open(filename, 'wb')
+            wf = wave.open(file_path, 'wb')
             wf.setnchannels(channels)
             wf.setsampwidth(sample_format)
             wf.setframerate(sample_rate)
@@ -970,19 +1005,22 @@ def record_audio_stream(filename):
                 wf.writeframes(audio_chunk)
             
             wf.close()
-            log_message(f"錄音已完成並儲存為 {file_path}")
             
-            # 上傳到 Google Drive
-            download_link = upload_to_google_drive(file_path)
-            
-            if download_link:
-                # 生成 QR Code
-                qr_path = generate_qr_code(download_link, base_filename)
-
-                log_message(f"處理完成！下載連結: {download_link}")
-                log_message(f"QR Code 已儲存至: {qr_path}")
+            # 確認檔案已成功寫入
+            if os.path.exists(file_path):
+                log_message(f"錄音已成功儲存為: {file_path}")
+                
+                # 上傳到 Google Drive
+                download_link = upload_to_google_drive(file_path)
+                
+                if download_link:
+                    # 生成 QR Code
+                    qr_path = generate_qr_code(download_link, base_filename)
+                    log_message(f"處理完成！下載連結: {download_link}")
+                else:
+                    log_message("上傳失敗，無法生成下載連結")
             else:
-                log_message("上傳失敗，無法生成下載連結")
+                log_message(f"錯誤: 無法確認檔案已成功儲存至 {file_path}")
         else:
             log_message("沒有捕獲到音訊數據")
         
