@@ -10,8 +10,19 @@ import os
 import pyaudio
 import numpy as np
 from scipy import signal
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+import qrcode
+import os
+import pickle
 
 current_playing_music = None  # 目前正在播放的音樂編號
+STORAGE_DIR = "C:/Users/maboo/yzu_2025/yzu_2025_1/recording"
+if not os.path.exists(STORAGE_DIR):
+    os.makedirs(STORAGE_DIR)
 
 device_audio_threads = {
     "ESP32_HornBLE": None,
@@ -65,9 +76,9 @@ rdp_audio_files = {
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
-    #"ESP32_MusicSensor_BLE"    # 歌單控制器
+    "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
 is_recording = False
@@ -86,6 +97,127 @@ device_connection_status = {uuid: False for uuid in ESP32_DEVICES}
 message_log = []
 # UI 更新回調函數 - 新增
 ui_update_callback = None
+
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+
+def get_credentials():
+    """取得 Google Drive API 的授權憑證"""
+    creds = None
+    
+    # 嘗試從保存的令牌文件載入憑證
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    
+    # 如果沒有可用的憑證或已過期，則進行新的授權流程
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            # 使用 credentials.json 啟動授權流程
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES)
+            
+            # 在本地伺服器上運行授權流程
+            # 這會打開瀏覽器讓你授權應用程式
+            creds = flow.run_local_server(port=0)
+        
+        # 保存令牌以供下次使用
+        with open('token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+    
+    return creds
+def authenticate_google_drive():
+    """認證 Google Drive API"""
+    creds = None
+    # 嘗試從保存的令牌文件加載憑證
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    # 如果沒有可用的憑證或已過期，則重新授權
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        # 保存令牌以供下次使用
+        with open('token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+    
+    return creds
+
+def upload_to_google_drive(file_path):
+    """上傳文件到 Google Drive 並設置為公開可訪問"""
+    try:
+        # 認證並構建服務
+        creds = authenticate_google_drive()
+        service = build('drive', 'v3', credentials=creds)
+        
+        # 檔案元數據
+        file_metadata = {
+            'name': os.path.basename(file_path),
+            # 可以添加特定資料夾 ID
+            # 'parents': ['YOUR_FOLDER_ID']
+        }
+        
+        # 上傳媒體文件
+        media = MediaFileUpload(file_path, resumable=True)
+        file = service.files().create(body=file_metadata,
+                                     media_body=media,
+                                     fields='id').execute()
+        
+        # 設置檔案為任何人都能查看
+        permission = {
+            'type': 'anyone',
+            'role': 'reader'
+        }
+        service.permissions().create(
+            fileId=file.get('id'),
+            body=permission
+        ).execute()
+        
+        # 獲取檔案的共享連結
+        file = service.files().get(
+            fileId=file.get('id'),
+            fields='webViewLink'
+        ).execute()
+        
+        download_link = file.get('webViewLink')
+        log_message(f"已上傳檔案到 Google Drive，下載連結: {download_link}")
+        
+        # 生成 QR Code
+        qr_path = generate_qr_code(download_link)
+        
+        return download_link, qr_path
+        
+    except Exception as e:
+        log_message(f"上傳到 Google Drive 時發生錯誤: {e}")
+        return None, None
+
+def generate_qr_code(url):
+    """生成 QR Code 並保存為圖片"""
+    try:
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(url)
+        qr.make(fit=True)
+        
+        img = qr.make_image(fill_color="black", back_color="white")
+        qr_path = "qrcode.png"
+        img.save(qr_path)
+        log_message(f"QR Code 已生成: {qr_path}")
+        
+        return qr_path
+    
+    except Exception as e:
+        log_message(f"生成 QR Code 時發生錯誤: {e}")
+        return None
 
 def change_playback_speed(audio_data, speed):
     """改變音訊資料的播放速度"""
@@ -577,6 +709,13 @@ def process_data(device_name, data):
         command = data.decode('utf-8')
         print(f"歌單控制器: 收到命令 {command}")
         
+        if command == "RECORD_START":
+            print("開始錄音")
+            start_recording()
+        elif command == "RECORD_STOP":
+            print("停止錄音")
+            stop_recording()
+
         # 根據命令選擇並播放對應的音樂
         if command == "PLAY_MUSIC_1":
             print("開始播放音樂1")
@@ -767,7 +906,7 @@ def start_recording():
     recording_thread.start()
 
 def stop_recording():
-    """停止錄製程式播放的音訊"""
+    """停止錄製程式播放的音訊並上傳到雲端"""
     global is_recording
     
     if not is_recording:
@@ -781,12 +920,22 @@ def stop_recording():
     # 等待錄音線程結束
     if recording_thread and recording_thread.is_alive():
         recording_thread.join(timeout=2.0)
+    
+    # 更新UI以顯示處理狀態
+    if ui_update_callback:
+        ui_update_callback("錄音已完成，正在處理並上傳...")
 
 def record_audio_stream(filename):
-    """直接捕獲和儲存程式產生的音訊數據"""
-    global is_recording, audio_buffer
+    """直接捕獲和儲存程式產生的音訊數據，上傳並生成QR碼"""
+    global is_recording, audio_buffer, qr_link_var
     
     try:
+        # 創建帶時間戳的檔名
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        base_filename = f"recording_{timestamp}"
+        full_filename = f"{base_filename}.wav"
+        file_path = os.path.join(STORAGE_DIR, full_filename)
+        
         # 創建 WAV 文件
         audio_buffer = []
         
@@ -805,7 +954,7 @@ def record_audio_stream(filename):
             channels = 2       # 立體聲
             sample_rate = 44100  # 採樣率
             
-            wf = wave.open(filename, 'wb')
+            wf = wave.open(file_path, 'wb')
             wf.setnchannels(channels)
             wf.setsampwidth(sample_format)
             wf.setframerate(sample_rate)
@@ -814,7 +963,23 @@ def record_audio_stream(filename):
                 wf.writeframes(audio_chunk)
             
             wf.close()
-            log_message(f"錄音已完成並儲存為 {filename}")
+            log_message(f"錄音已完成並儲存為 {file_path}")
+            
+            # 上傳到 Google Drive
+            download_link = upload_to_google_drive(file_path)
+            
+            if download_link:
+                # 生成 QR Code
+                qr_path = generate_qr_code(download_link, base_filename)
+                
+                # 更新 UI 中的連結顯示
+                if qr_link_var:
+                    qr_link_var.set(download_link)
+
+                log_message(f"處理完成！下載連結: {download_link}")
+                log_message(f"QR Code 已儲存至: {qr_path}")
+            else:
+                log_message("上傳失敗，無法生成下載連結")
         else:
             log_message("沒有捕獲到音訊數據")
         
