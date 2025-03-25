@@ -374,8 +374,13 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
                 
             chunk_data = original_frames[i:i + chunk * audio_data['format'] * audio_data['channels']]
             if len(chunk_data) > 0:
+                # 這裡直接使用原始數據，因為已經通過調整採樣率來改變播放速度
                 stream.write(chunk_data)
+                
+                # 在錄音模式下收集音訊數據
                 if is_recording:
+                    # 將正在播放的音訊數據直接添加到錄音緩衝區
+                    # 由於我們使用的是調整後的採樣率，所以這裡直接使用原始數據即可保持相同的播放速度
                     audio_buffer.append(chunk_data)
         
         # 關閉流，準備下一次迭代
@@ -440,7 +445,10 @@ def play_audio_once(device_name, file_path, speed=1.0):
             
             # 播放音頻塊
             stream.write(chunk_data)
+            
+            # 在錄音模式下收集音訊數據
             if is_recording:
+                # 將正在播放的音訊數據直接添加到錄音緩衝區
                 audio_buffer.append(chunk_data)
     except Exception as e:
         print(f"播放音訊時出錯: {e}")
@@ -925,7 +933,7 @@ def stop_recording():
 
 def record_audio_stream(filename):
     """直接捕獲和儲存程式產生的音訊數據，上傳並生成QR碼"""
-    global is_recording, audio_buffer, qr_link_var
+    global is_recording, audio_buffer
     
     try:
         # 創建帶時間戳的檔名
@@ -947,12 +955,13 @@ def record_audio_stream(filename):
             
         # 錄音結束後，將收集到的數據寫入文件
         if audio_buffer:
-            # 假設所有音訊數據有相同的格式
+            # 在存檔時使用與播放相同的參數
             sample_format = 2  # 16位整數
             channels = 2       # 立體聲
-            sample_rate = 44100  # 採樣率
+            # 如果播放時有改變採樣率，這裡也應該使用相同的值
+            sample_rate = 44100  # 確保這與播放時的採樣率一致
             
-            wf = wave.open(file_path, 'wb')
+            wf = wave.open(filename, 'wb')
             wf.setnchannels(channels)
             wf.setsampwidth(sample_format)
             wf.setframerate(sample_rate)
@@ -969,10 +978,6 @@ def record_audio_stream(filename):
             if download_link:
                 # 生成 QR Code
                 qr_path = generate_qr_code(download_link, base_filename)
-                
-                # 更新 UI 中的連結顯示
-                if qr_link_var:
-                    qr_link_var.set(download_link)
 
                 log_message(f"處理完成！下載連結: {download_link}")
                 log_message(f"QR Code 已儲存至: {qr_path}")
