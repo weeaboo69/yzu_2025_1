@@ -99,6 +99,8 @@ message_log = []
 ui_update_callback = None
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
+CREDENTIALS_PATH = os.path.join(STORAGE_DIR, 'credentials.json')
+TOKEN_PATH = os.path.join(STORAGE_DIR, 'token.pickle')
 
 def get_credentials():
     """取得 Google Drive API 的授權憑證"""
@@ -127,12 +129,13 @@ def get_credentials():
             pickle.dump(creds, token)
     
     return creds
+
 def authenticate_google_drive():
     """認證 Google Drive API"""
     creds = None
     # 嘗試從保存的令牌文件加載憑證
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
+    if os.path.exists(TOKEN_PATH):
+        with open(TOKEN_PATH, 'rb') as token:
             creds = pickle.load(token)
     # 如果沒有可用的憑證或已過期，則重新授權
     if not creds or not creds.valid:
@@ -140,10 +143,10 @@ def authenticate_google_drive():
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
+                CREDENTIALS_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
         # 保存令牌以供下次使用
-        with open('token.pickle', 'wb') as token:
+        with open(TOKEN_PATH, 'wb') as token:
             pickle.dump(creds, token)
     
     return creds
@@ -157,9 +160,7 @@ def upload_to_google_drive(file_path):
         
         # 檔案元數據
         file_metadata = {
-            'name': os.path.basename(file_path),
-            # 可以添加特定資料夾 ID
-            # 'parents': ['YOUR_FOLDER_ID']
+            'name': os.path.basename(file_path)
         }
         
         # 上傳媒體文件
@@ -187,16 +188,13 @@ def upload_to_google_drive(file_path):
         download_link = file.get('webViewLink')
         log_message(f"已上傳檔案到 Google Drive，下載連結: {download_link}")
         
-        # 生成 QR Code
-        qr_path = generate_qr_code(download_link)
-        
-        return download_link, qr_path
+        return download_link
         
     except Exception as e:
         log_message(f"上傳到 Google Drive 時發生錯誤: {e}")
-        return None, None
+        return None
 
-def generate_qr_code(url):
+def generate_qr_code(url, filename="download_link"):
     """生成 QR Code 並保存為圖片"""
     try:
         qr = qrcode.QRCode(
@@ -209,7 +207,7 @@ def generate_qr_code(url):
         qr.make(fit=True)
         
         img = qr.make_image(fill_color="black", back_color="white")
-        qr_path = "qrcode.png"
+        qr_path = os.path.join(STORAGE_DIR, f"{filename}.png")
         img.save(qr_path)
         log_message(f"QR Code 已生成: {qr_path}")
         

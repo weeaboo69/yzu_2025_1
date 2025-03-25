@@ -44,11 +44,22 @@ void IRAM_ATTR sensorTriggered(int sensorID) {
             (secondLastTriggered == SENSOR_C && lastTriggered == SENSOR_D) ||
             (secondLastTriggered == SENSOR_D && lastTriggered == SENSOR_A)) {
             Serial.println("順時針旋轉");
+            if (deviceConnected) {
+              pCharacteristic->setValue(gjp4);
+              pCharacteristic->notify();
+              Serial.println("發送順時針");
+            }
+
         } else if ((secondLastTriggered == SENSOR_A && lastTriggered == SENSOR_D) ||
                    (secondLastTriggered == SENSOR_D && lastTriggered == SENSOR_C) ||
                    (secondLastTriggered == SENSOR_C && lastTriggered == SENSOR_B) ||
                    (secondLastTriggered == SENSOR_B && lastTriggered == SENSOR_A)) {
             Serial.println("逆時針旋轉");
+            if (deviceConnected) {
+              pCharacteristic->setValue(su4);
+              pCharacteristic->notify();
+              Serial.println("發送逆時針");
+            }
         }
     }
 }
@@ -67,7 +78,7 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(SENSOR_C), [](){ sensorTriggered(SENSOR_C); }, FALLING);
     attachInterrupt(digitalPinToInterrupt(SENSOR_D), [](){ sensorTriggered(SENSOR_D); }, FALLING);
 
-    BLEDevice::init("ESP32_WHEEL_BLE");
+    BLEDevice::init("ESP32_Wheelspeed2_BLE");
   
     // 建立 BLE 服務器
     pServer = BLEDevice::createServer();
