@@ -78,7 +78,7 @@ rdp_audio_files = {
 ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
     #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    #"ESP32_RDP_BLE",           # 輪子觸發控制器
+    "ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
@@ -970,7 +970,6 @@ def stop_recording():
         ui_update_callback("錄音已完成，正在處理並上傳...")
 
 def record_audio_stream(filename):
-    """直接捕獲和儲存程式產生的音訊數據"""
     global is_recording, audio_buffer
     
     try:
@@ -978,23 +977,51 @@ def record_audio_stream(filename):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         base_filename = f"recording_{timestamp}"
         full_filename = f"{base_filename}.wav"
+        file_path = os.path.join(STORAGE_DIR, full_filename)
         
-        # 使用更可靠的路徑（當前工作目錄）
-        file_path = os.path.join(os.getcwd(), full_filename)
-        file_path = os.path.normpath(file_path)
+        # 創建 WAV 文件
+        audio_buffer = []
         
-        log_message(f"錄音將儲存至: {file_path}")
+        # 記錄開始時間
+        start_time = time.time()
         
         # 持續收集音訊數據，直到停止錄音
         while is_recording:
+            # 短暫休眠，避免 CPU 使用率過高
             time.sleep(0.01)
             
         # 錄音結束後，將收集到的數據寫入文件
         if audio_buffer:
-            # 假設所有音訊數據有相同的格式
-            sample_format = 2  # 16位整數
-            channels = 2       # 立體聲
-            sample_rate = 44100  # 採樣率
+            # 從當前播放的音訊獲取參數
+            current_device = None
+            current_file_path = None
+            
+            # 找出當前播放的設備和文件
+            for device, thread in device_audio_threads.items():
+                if thread and thread.is_alive():
+                    current_device = device
+                    break
+                    
+            if current_device and current_playing_music:
+                if current_playing_music in music_files:
+                    current_file_path = music_files[current_playing_music]
+                elif current_playing_music == "RDP":
+                    current_file_path = rdp_audio_files["default"]
+                    
+            # 獲取原始音訊的參數
+            if current_file_path and current_file_path in loaded_audio_data:
+                audio_data = loaded_audio_data[current_file_path]
+                sample_format = audio_data['format']
+                channels = audio_data['channels']
+                # 使用調整後的採樣率 (考慮當前的播放速度)
+                original_rate = audio_data['rate']
+                adjusted_rate = int(original_rate * device_playback_speeds.get(current_device, 1.0))
+                sample_rate = adjusted_rate
+            else:
+                # 默認參數
+                sample_format = 2
+                channels = 2
+                sample_rate = 44100
             
             wf = wave.open(file_path, 'wb')
             wf.setnchannels(channels)
@@ -1003,26 +1030,19 @@ def record_audio_stream(filename):
             
             for audio_chunk in audio_buffer:
                 wf.writeframes(audio_chunk)
+            # 自動上傳到 Google Drive
+            log_message("正在自動上傳錄音檔案...")
+            download_link = upload_to_google_drive(file_path)
             
-            wf.close()
-            
-            # 確認檔案已成功寫入
-            if os.path.exists(file_path):
-                log_message(f"錄音已成功儲存為: {file_path}")
+            if download_link:
+                # 生成 QR Code
+                qr_path = generate_qr_code(download_link, base_filename)
                 
-                # 上傳到 Google Drive
-                download_link = upload_to_google_drive(file_path)
+                log_message(f"上傳成功！下載連結: {download_link}")
+                log_message(f"QR Code 已儲存至: {qr_path}")
                 
-                if download_link:
-                    # 生成 QR Code
-                    qr_path = generate_qr_code(download_link, base_filename)
-                    log_message(f"處理完成！下載連結: {download_link}")
-                else:
-                    log_message("上傳失敗，無法生成下載連結")
             else:
-                log_message(f"錯誤: 無法確認檔案已成功儲存至 {file_path}")
-        else:
-            log_message("沒有捕獲到音訊數據")
+                log_message("上傳失敗，無法生成下載連結")
         
     except Exception as e:
         log_message(f"錄音過程中發生錯誤: {e}")
