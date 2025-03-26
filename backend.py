@@ -76,9 +76,9 @@ rdp_audio_files = {
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    #"ESP32_HornBLE",           # 喇叭控制器
+    "ESP32_HornBLE",           # 喇叭控制器
     #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    #"ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
@@ -627,6 +627,7 @@ def process_data(device_name, data):
             device_stop_flags[device_name] = False
             
             print("喇叭控制器: 已徹底重置所有音效和狀態")
+            play_audio_once(horn_audio_file_after)
             
         else:
             position = data[0]  # 播放位置 (0-100)
@@ -925,6 +926,25 @@ def test_play_music(index, loop=True):
 def get_current_playing_music():
     return current_playing_music
 
+def standardize_audio_file(input_file, output_file):
+    """使用標準格式處理音訊檔案，確保在不同裝置上播放速度一致"""
+    try:
+        import subprocess
+        
+        # 使用 ffmpeg 將音訊檔案轉換為標準格式（44.1kHz、16位、立體聲）
+        subprocess.call([
+            'ffmpeg', '-i', input_file,
+            '-ar', '44100',  # 設定採樣率為 44.1kHz
+            '-acodec', 'pcm_s16le',  # 16位編碼
+            '-ac', '2',  # 立體聲
+            output_file
+        ])
+        
+        return output_file
+    except Exception as e:
+        log_message(f"標準化音訊檔案時發生錯誤: {e}")
+        return input_file
+
 def start_recording():
     """開始直接捕獲程式播放的音訊數據"""
     global is_recording, recording_thread, audio_buffer
@@ -992,6 +1012,19 @@ def record_audio_stream(filename):
             
         # 錄音結束後，將收集到的數據寫入文件
         if audio_buffer:
+            # 固定使用標準音訊參數
+            sample_format = 2  # 16位整數
+            channels = 2       # 立體聲
+            sample_rate = 44100  # 固定使用 44.1kHz 採樣率
+            
+            wf = wave.open(file_path, 'wb')
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_format)
+            wf.setframerate(sample_rate)
+            
+            # 如果原音訊採樣率不是 44.1kHz，需要重新採樣
+            original_rate = None
+            
             # 從當前播放的音訊獲取參數
             current_device = None
             current_file_path = None
@@ -1011,25 +1044,50 @@ def record_audio_stream(filename):
             # 獲取原始音訊的參數
             if current_file_path and current_file_path in loaded_audio_data:
                 audio_data = loaded_audio_data[current_file_path]
-                sample_format = audio_data['format']
-                channels = audio_data['channels']
-                # 使用調整後的採樣率 (考慮當前的播放速度)
                 original_rate = audio_data['rate']
-                adjusted_rate = int(original_rate * device_playback_speeds.get(current_device, 1.0))
-                sample_rate = adjusted_rate
+                # 計算重採樣比例
+                resample_ratio = sample_rate / original_rate
+            
+            # 處理和寫入音訊數據
+            if original_rate and original_rate != sample_rate:
+                # 需要重新採樣
+                from scipy import signal
+                import numpy as np
+                
+                # 將所有音訊數據合併為一個連續的數組
+                all_audio = b''.join(audio_buffer)
+                audio_array = np.frombuffer(all_audio, dtype=np.int16)
+                
+                # 如果是立體聲，需要分別處理左右聲道
+                if channels == 2:
+                    # 分離左右聲道
+                    left_channel = audio_array[0::2]
+                    right_channel = audio_array[1::2]
+                    
+                    # 重新採樣每個聲道
+                    new_length = int(len(left_channel) * resample_ratio)
+                    resampled_left = signal.resample(left_channel, new_length)
+                    resampled_right = signal.resample(right_channel, new_length)
+                    
+                    # 交錯合併左右聲道
+                    resampled_audio = np.empty(new_length * 2, dtype=np.int16)
+                    resampled_audio[0::2] = resampled_left.astype(np.int16)
+                    resampled_audio[1::2] = resampled_right.astype(np.int16)
+                else:
+                    # 單聲道處理
+                    new_length = int(len(audio_array) * resample_ratio)
+                    resampled_audio = signal.resample(audio_array, new_length).astype(np.int16)
+                
+                # 寫入重新採樣後的數據
+                wf.writeframes(resampled_audio.tobytes())
             else:
-                # 默認參數
-                sample_format = 2
-                channels = 2
-                sample_rate = 44100
+                # 直接寫入原始數據
+                for audio_chunk in audio_buffer:
+                    wf.writeframes(audio_chunk)
             
-            wf = wave.open(file_path, 'wb')
-            wf.setnchannels(channels)
-            wf.setsampwidth(sample_format)
-            wf.setframerate(sample_rate)
+            wf.close()
+            log_message(f"錄音已完成並儲存為 {file_path}，採樣率: 44.1kHz")
             
-            for audio_chunk in audio_buffer:
-                wf.writeframes(audio_chunk)
             # 自動上傳到 Google Drive
             log_message("正在自動上傳錄音檔案...")
             download_link = upload_to_google_drive(file_path)
@@ -1040,12 +1098,13 @@ def record_audio_stream(filename):
                 
                 log_message(f"上傳成功！下載連結: {download_link}")
                 log_message(f"QR Code 已儲存至: {qr_path}")
-                
             else:
                 log_message("上傳失敗，無法生成下載連結")
         
     except Exception as e:
         log_message(f"錄音過程中發生錯誤: {e}")
+        import traceback
+        log_message(traceback.format_exc())
         is_recording = False
 if __name__ == "__main__":
     # 執行主函數
