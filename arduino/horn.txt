@@ -10,6 +10,8 @@
 // 感應器腳位及閾值定義
 int zxw = 0;
 int lastSentValue = 0;
+int sensorValue;
+int sensorValue2;
 const int SENSOR_PIN = 34;
 const int SENSOR_PIN_2 = 35;
 const int TOTAL_MAX = 8100;     // 總值未按壓時的最大值
@@ -88,8 +90,8 @@ void setup() {
 
 void loop() {
   // 讀取感測器值
-  int sensorValue = analogRead(SENSOR_PIN);
-  int sensorValue2 = analogRead(SENSOR_PIN_2);
+  sensorValue = analogRead(SENSOR_PIN);
+  sensorValue2 = analogRead(SENSOR_PIN_2);
   int totalValue = sensorValue + sensorValue2;
   
   // 將總值限制在設定的範圍內
@@ -113,7 +115,7 @@ void loop() {
   bool currentlyBent2 = (totalValue >= BEND_THRESHOLD2);
   
   // 如果從未彎曲變為彎曲
-if (currentlyBent && !isBent) {
+if (sensorValue2 <= 4050 && !isBent) {
   isBent = true;
   hornPlayed = false;  // 重置播放標記
   lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
@@ -129,7 +131,7 @@ if (currentlyBent && !isBent) {
   }
 }
 // 如果從彎曲變為未彎曲，且已經過了防抖動時間
-else if (currentlyBent2 && isBent && (currentTime - lastBendStartTime > 100)) {
+else if (/*currentlyBent2 && isBent && (currentTime - lastBendStartTime > 100)*/isBent && sensorValue2 >= 4090 && (currentTime - lastBendStartTime > 100)) {
   isBent = false;
   Serial.println("偵測到彎曲結束");
   

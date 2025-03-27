@@ -77,8 +77,8 @@ rdp_audio_files = {
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     "ESP32_HornBLE",           # 喇叭控制器
-    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    #"ESP32_RDP_BLE",           # 輪子觸發控制器
+    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    "ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE"    # 歌單控制器
 ]
 
@@ -627,7 +627,7 @@ def process_data(device_name, data):
             device_stop_flags[device_name] = False
             
             print("喇叭控制器: 已徹底重置所有音效和狀態")
-            play_audio_once(horn_audio_file_after)
+            play_device_music(device_name, horn_audio_file_after, loop=False)
             
         else:
             position = data[0]  # 播放位置 (0-100)
