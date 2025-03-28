@@ -5,6 +5,9 @@ from tkinter import ttk, scrolledtext, filedialog, messagebox
 import threading
 import time
 import backend
+import json
+import tempfile
+
 
 class MusicControlApp:
     def __init__(self, root):
@@ -65,7 +68,45 @@ class MusicControlApp:
         
         # 關閉視窗時的處理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        # 啟動歌單控制器狀態檢查
+        self.songlist_check_thread = threading.Thread(target=self.check_songlist_status)
+        self.songlist_check_thread.daemon = True
+        self.songlist_check_thread.start()
     
+    def check_songlist_status(self):
+        """定期檢查歌單控制器的狀態"""
+        while self.running:
+            try:
+                # 獲取歌單控制器狀態
+                status = backend.get_songlist_controller_status()
+                
+                # 更新UI中的連接狀態
+                for item in self.device_tree.get_children():
+                    if self.device_tree.item(item, "text") == "ESP32_MusicSensor_BLE":
+                        connected = "已連接" if status.get("connected", False) else "未連接"
+                        self.device_tree.item(item, values=(connected,))
+                        break
+                
+                # 更新當前播放的音樂
+                playing = status.get("playing")
+                if playing:
+                    self.update_current_music_display(playing)
+                
+                time.sleep(1)  # 每秒檢查一次
+            except Exception as e:
+                print(f"檢查歌單控制器狀態時發生錯誤: {e}")
+                time.sleep(5)  # 出錯時延長檢查間隔
+
+    # 添加更新當前音樂顯示的方法
+    def update_current_music_display(self, music_idx):
+        """更新當前播放的音樂顯示"""
+        if music_idx == "RDP":
+            display_text = "RDP 音效"
+        else:
+            display_text = f"音樂 {music_idx}"
+        
+        self.current_music_var.set(display_text)
+
     def setup_control_tab(self):
         # 分割控制頁為左右兩部分
         control_paned = ttk.PanedWindow(self.control_frame, orient=tk.HORIZONTAL)
@@ -158,8 +199,27 @@ class MusicControlApp:
         self.qr_image_label.pack(padx=5, pady=5)
         
     def setup_settings_tab(self):
-        # 音樂檔案設定區域
-        music_files_frame = ttk.LabelFrame(self.settings_frame, text="音樂檔案設定")
+        """設置設定頁簽"""
+        # 使用滾動視窗
+        settings_canvas = tk.Canvas(self.settings_frame)
+        scrollbar = ttk.Scrollbar(self.settings_frame, orient="vertical", command=settings_canvas.yview)
+        scrollable_frame = ttk.Frame(settings_canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: settings_canvas.configure(
+                scrollregion=settings_canvas.bbox("all")
+            )
+        )
+
+        settings_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        settings_canvas.configure(yscrollcommand=scrollbar.set)
+
+        settings_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # ========== 音樂檔案設定區域 ==========
+        music_files_frame = ttk.LabelFrame(scrollable_frame, text="音樂檔案設定")
         music_files_frame.pack(fill=tk.X, padx=10, pady=10)
         
         # 音樂檔案路徑設定
@@ -176,27 +236,250 @@ class MusicControlApp:
             entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
             
             ttk.Button(frame, text="瀏覽", 
-                      command=lambda entry_var=self.music_file_vars[idx]: self.browse_file(entry_var)).pack(side=tk.LEFT, padx=5)
+                    command=lambda entry_var=self.music_file_vars[idx]: self.browse_file(entry_var)).pack(side=tk.LEFT, padx=5)
         
-        # RDP音效檔案路徑設定
-        rdp_frame = ttk.Frame(music_files_frame)
-        rdp_frame.pack(fill=tk.X, padx=5, pady=5)
+        # ========== 喇叭音效設定區域 ==========
+        horn_files_frame = ttk.LabelFrame(scrollable_frame, text="喇叭音效設定")
+        horn_files_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        ttk.Label(rdp_frame, text="RDP 音效路徑:").pack(side=tk.LEFT, padx=5)
+        # 喇叭音效前後設定
+        self.horn_file_vars = {}
         
-        self.rdp_file_var = tk.StringVar(value=backend.rdp_audio_file)
-        entry = ttk.Entry(rdp_frame, textvariable=self.rdp_file_var, width=50)
+        # 喇叭音效 (按壓前)
+        horn_before_frame = ttk.Frame(horn_files_frame)
+        horn_before_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(horn_before_frame, text="喇叭音效 (按壓前):").pack(side=tk.LEFT, padx=5)
+        
+        self.horn_file_vars["before"] = tk.StringVar(value=backend.horn_audio_file_before)
+        entry = ttk.Entry(horn_before_frame, textvariable=self.horn_file_vars["before"], width=50)
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         
-        ttk.Button(rdp_frame, text="瀏覽", 
-                  command=lambda: self.browse_file(self.rdp_file_var)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(horn_before_frame, text="瀏覽", 
+                command=lambda: self.browse_file(self.horn_file_vars["before"])).pack(side=tk.LEFT, padx=5)
         
-        # 儲存按鈕
-        save_frame = ttk.Frame(music_files_frame)
-        save_frame.pack(fill=tk.X, padx=5, pady=10)
+        # 喇叭音效 (按壓後)
+        horn_after_frame = ttk.Frame(horn_files_frame)
+        horn_after_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        ttk.Button(save_frame, text="儲存設定", command=self.save_settings).pack(side=tk.RIGHT, padx=5)
+        ttk.Label(horn_after_frame, text="喇叭音效 (按壓後):").pack(side=tk.LEFT, padx=5)
+        
+        self.horn_file_vars["after"] = tk.StringVar(value=backend.horn_audio_file_after)
+        entry = ttk.Entry(horn_after_frame, textvariable=self.horn_file_vars["after"], width=50)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        ttk.Button(horn_after_frame, text="瀏覽", 
+                command=lambda: self.browse_file(self.horn_file_vars["after"])).pack(side=tk.LEFT, padx=5)
+        
+        # ========== 輪子音效設定區域 ==========
+        wheel_files_frame = ttk.LabelFrame(scrollable_frame, text="輪子音效設定")
+        wheel_files_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # 建立輪子音效變數
+        self.wheel_file_vars = {}
+        
+        # 輪子音效1
+        wheel_1_frame = ttk.Frame(wheel_files_frame)
+        wheel_1_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(wheel_1_frame, text="輪子音效 1:").pack(side=tk.LEFT, padx=5)
+        
+        self.wheel_file_vars["1"] = tk.StringVar(value=backend.wheel_audio_file.get("1", ""))
+        entry = ttk.Entry(wheel_1_frame, textvariable=self.wheel_file_vars["1"], width=50)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        ttk.Button(wheel_1_frame, text="瀏覽", 
+                command=lambda: self.browse_file(self.wheel_file_vars["1"])).pack(side=tk.LEFT, padx=5)
+        
+        # 輪子音效2
+        wheel_2_frame = ttk.Frame(wheel_files_frame)
+        wheel_2_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(wheel_2_frame, text="輪子音效 2:").pack(side=tk.LEFT, padx=5)
+        
+        self.wheel_file_vars["2"] = tk.StringVar(value=backend.wheel_audio_file.get("2", ""))
+        entry = ttk.Entry(wheel_2_frame, textvariable=self.wheel_file_vars["2"], width=50)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        ttk.Button(wheel_2_frame, text="瀏覽", 
+                command=lambda: self.browse_file(self.wheel_file_vars["2"])).pack(side=tk.LEFT, padx=5)
+        
+        # 輪子原始音效
+        wheel_og_frame = ttk.Frame(wheel_files_frame)
+        wheel_og_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(wheel_og_frame, text="輪子原始音效:").pack(side=tk.LEFT, padx=5)
+        
+        self.wheel_file_vars["OG"] = tk.StringVar(value=backend.wheel_audio_file.get("OG", ""))
+        entry = ttk.Entry(wheel_og_frame, textvariable=self.wheel_file_vars["OG"], width=50)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        ttk.Button(wheel_og_frame, text="瀏覽", 
+                command=lambda: self.browse_file(self.wheel_file_vars["OG"])).pack(side=tk.LEFT, padx=5)
+        
+        # ========== RDP音效設定區域 ==========
+        rdp_files_frame = ttk.LabelFrame(scrollable_frame, text="RDP音效設定")
+        rdp_files_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # 建立RDP音效變數
+        self.rdp_file_vars = {}
+        
+        # 標準 RDP 音效
+        rdp_items = [
+            ("1", "RDP 音效 1:"),
+            ("2", "RDP 音效 2:"),
+            ("3", "RDP 音效 3:"),
+            ("default", "預設 RDP 音效:"),
+            ("RDP_2_before", "RDP 按鈕2 (按下):"),
+            ("RDP_2_after", "RDP 按鈕2 (放開):"),
+            ("RDP_3_before", "RDP 按鈕3 (按下):"),
+            ("RDP_3_after", "RDP 按鈕3 (放開):")
+        ]
+        
+        for key, label in rdp_items:
+            rdp_frame = ttk.Frame(rdp_files_frame)
+            rdp_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            ttk.Label(rdp_frame, text=label).pack(side=tk.LEFT, padx=5)
+            
+            self.rdp_file_vars[key] = tk.StringVar(value=backend.rdp_audio_files.get(key, ""))
+            entry = ttk.Entry(rdp_frame, textvariable=self.rdp_file_vars[key], width=50)
+            entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+            
+            ttk.Button(rdp_frame, text="瀏覽", 
+                    command=lambda k=key: self.browse_file(self.rdp_file_vars[k])).pack(side=tk.LEFT, padx=5)
+        
+        # ========== 儲存按鈕 ==========
+        save_frame = ttk.Frame(scrollable_frame)
+        save_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Button(save_frame, text="儲存所有設定", command=self.save_all_settings).pack(side=tk.RIGHT, padx=5)
+        
+        # ========== 重新啟動歌單控制器按鈕 ==========
+        restart_frame = ttk.Frame(scrollable_frame)
+        restart_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Button(restart_frame, text="重新啟動歌單控制器", 
+                command=self.restart_songlist_controller).pack(side=tk.LEFT, padx=5)
     
+    def restart_songlist_controller(self):
+        """重新啟動歌單控制器"""
+        # 先停止當前的歌單控制器
+        backend.stop_songlist_controller()
+        time.sleep(1)  # 等待舊進程完全停止
+        
+        # 啟動新的歌單控制器
+        backend.songlist_process = backend.start_songlist_controller()
+        
+        self.update_status("歌單控制器已重新啟動")
+        messagebox.showinfo("成功", "歌單控制器已重新啟動")
+
+    def save_all_settings(self):
+        """儲存所有音訊檔案設定"""
+        success = True
+        
+        # 更新音樂檔案路徑
+        for idx, var in self.music_file_vars.items():
+            new_path = var.get().strip()
+            if new_path and new_path != backend.music_files.get(idx, ""):
+                if not backend.set_music_file_path(idx, new_path):
+                    success = False
+                    messagebox.showerror("錯誤", f"無法設置音樂 {idx} 的路徑: {new_path}")
+        
+        # 更新喇叭音效檔案路徑
+        if self.horn_file_vars["before"].get() != backend.horn_audio_file_before:
+            backend.horn_audio_file_before = self.horn_file_vars["before"].get()
+            try:
+                # 重新加載音訊文件
+                wf = wave.open(backend.horn_audio_file_before, 'rb')
+                audio_data = {
+                    'format': wf.getsampwidth(),
+                    'channels': wf.getnchannels(),
+                    'rate': wf.getframerate(),
+                    'frames': wf.readframes(wf.getnframes())
+                }
+                backend.loaded_audio_data[backend.horn_audio_file_before] = audio_data
+                wf.close()
+                self.update_status(f"已更新喇叭前置音效")
+            except Exception as e:
+                success = False
+                messagebox.showerror("錯誤", f"加載喇叭前置音效失敗: {e}")
+        
+        if self.horn_file_vars["after"].get() != backend.horn_audio_file_after:
+            backend.horn_audio_file_after = self.horn_file_vars["after"].get()
+            try:
+                # 重新加載音訊文件
+                wf = wave.open(backend.horn_audio_file_after, 'rb')
+                audio_data = {
+                    'format': wf.getsampwidth(),
+                    'channels': wf.getnchannels(),
+                    'rate': wf.getframerate(),
+                    'frames': wf.readframes(wf.getnframes())
+                }
+                backend.loaded_audio_data[backend.horn_audio_file_after] = audio_data
+                wf.close()
+                self.update_status(f"已更新喇叭後置音效")
+            except Exception as e:
+                success = False
+                messagebox.showerror("錯誤", f"加載喇叭後置音效失敗: {e}")
+        
+        # 更新輪子音效檔案路徑
+        for key, var in self.wheel_file_vars.items():
+            new_path = var.get().strip()
+            if new_path and new_path != backend.wheel_audio_file.get(key, ""):
+                backend.wheel_audio_file[key] = new_path
+                try:
+                    # 重新加載音訊文件
+                    wf = wave.open(new_path, 'rb')
+                    audio_data = {
+                        'format': wf.getsampwidth(),
+                        'channels': wf.getnchannels(),
+                        'rate': wf.getframerate(),
+                        'frames': wf.readframes(wf.getnframes())
+                    }
+                    backend.loaded_audio_data[new_path] = audio_data
+                    wf.close()
+                    self.update_status(f"已更新輪子音效 {key}")
+                except Exception as e:
+                    success = False
+                    messagebox.showerror("錯誤", f"加載輪子音效 {key} 失敗: {e}")
+        
+        # 更新RDP音效檔案路徑
+        for key, var in self.rdp_file_vars.items():
+            new_path = var.get().strip()
+            if new_path and new_path != backend.rdp_audio_files.get(key, ""):
+                backend.rdp_audio_files[key] = new_path
+                try:
+                    # 重新加載音訊文件
+                    wf = wave.open(new_path, 'rb')
+                    audio_data = {
+                        'format': wf.getsampwidth(),
+                        'channels': wf.getnchannels(),
+                        'rate': wf.getframerate(),
+                        'frames': wf.readframes(wf.getnframes())
+                    }
+                    backend.loaded_audio_data[new_path] = audio_data
+                    wf.close()
+                    self.update_status(f"已更新RDP音效 {key}")
+                except Exception as e:
+                    success = False
+                    messagebox.showerror("錯誤", f"加載RDP音效 {key} 失敗: {e}")
+        
+        # 發送更新命令給歌單控制器
+        if success:
+            # 建立一個包含所有音樂檔案路徑的配置
+            songlist_config = {
+                "music_files": {k: v.get() for k, v in self.music_file_vars.items()}
+            }
+            # 發送配置更新命令
+            backend.send_command_to_songlist("UPDATE_CONFIG", songlist_config)
+            
+            # 顯示成功訊息
+            self.update_status("所有設定已儲存")
+            messagebox.showinfo("成功", "所有設定已成功儲存")
+        else:
+            self.update_status("部分設定儲存失敗")
+
     def setup_log_tab(self):
         # 日誌文字區域
         self.log_text = scrolledtext.ScrolledText(self.log_frame, wrap=tk.WORD, height=20)
@@ -251,6 +534,11 @@ class MusicControlApp:
             status_text = "已連接" if connected else "未連接"
             self.device_tree.insert("", "end", text=device_name, values=(status_text,))
     
+        # 添加歌單控制器顯示
+        songlist_status = backend.get_songlist_controller_status()
+        status_text = "已連接" if songlist_status.get("connected", False) else "未連接"
+        self.device_tree.insert("", "end", text="ESP32_MusicSensor_BLE", values=(status_text,))
+    
     def play_music(self, music_idx):
         """播放選定的音樂"""
         loop = music_idx != "RDP"  # RDP音效不循環播放
@@ -284,8 +572,8 @@ class MusicControlApp:
         
         # 更新RDP音效檔案路徑
         rdp_path = self.rdp_file_var.get().strip()
-        if rdp_path and rdp_path != backend.rdp_audio_file:
-            if not backend.set_rdp_audio_file_path(rdp_path):
+        if rdp_path and rdp_path != backend.rdp_audio_filse:
+            if not backend.set_rdp_audio_files_path(rdp_path):
                 success = False
                 messagebox.showerror("錯誤", f"無法設置RDP音效路徑: {rdp_path}")
         
@@ -343,9 +631,13 @@ class MusicControlApp:
             try:
                 # 停止所有播放
                 backend.stop_current_audio()
+                # 停止歌單控制器
+                backend.stop_songlist_controller()
                 # 等待UI更新線程結束
                 if self.update_thread.is_alive():
                     self.update_thread.join(timeout=1.0)
+                if self.songlist_check_thread.is_alive():
+                    self.songlist_check_thread.join(timeout=1.0)
             except:
                 pass
             

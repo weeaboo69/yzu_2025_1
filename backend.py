@@ -18,6 +18,8 @@ from googleapiclient.http import MediaFileUpload
 import qrcode
 import os
 import pickle
+import json
+import tempfile
 
 
 # 在檔案開頭的全域變數部分添加
@@ -26,6 +28,7 @@ audio_last_update_time = 0  # 新增：最後一次添加音訊數據的時間
 audio_format = 2  # 預設值：16位元整數
 audio_channels = 2  # 預設值：立體聲
 audio_rate = 44100  # 預設值：44.1kHz採樣率
+songlist_process = None
 
 current_playing_music = None  # 目前正在播放的音樂編號
 STORAGE_DIR = r"C:\Users\maboo\yzu_2025\yzu_2025_1\recording"
@@ -129,6 +132,32 @@ ui_update_callback = None
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 CREDENTIALS_PATH = os.path.join(STORAGE_DIR, 'credentials.json')
 TOKEN_PATH = os.path.join(STORAGE_DIR, 'token.pickle')
+
+def start_songlist_controller():
+    """啟動歌單控制器程式"""
+    import subprocess
+    import sys
+    import os
+    
+    try:
+        # 取得當前目錄
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        songlist_path = os.path.join(current_dir, "songlist_controller.py")
+        
+        # 使用相同的 Python 解釋器啟動程式
+        python_exe = sys.executable
+        
+        # 以子程序方式啟動，不等待其完成
+        process = subprocess.Popen([python_exe, songlist_path], 
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)  # 在 Windows 下隱藏命令視窗
+        
+        log_message("已啟動歌單控制器程式")
+        return process
+    except Exception as e:
+        log_message(f"啟動歌單控制器程式失敗: {e}")
+        return None
 
 def get_credentials():
     """取得 Google Drive API 的授權憑證"""
@@ -938,7 +967,7 @@ def set_music_file_path(index, new_path):
     return False
 
 # 設置RDP音效文件路徑
-def set_rdp_audio_file_path(key, new_path):
+def set_rdp_audio_files_path(key, new_path):
     """設置特定 RDP 音效文件路徑"""
     global rdp_audio_files
     if os.path.exists(new_path):
@@ -986,6 +1015,11 @@ async def start_bluetooth_service():
 
 # 啟動後端服務的函數 (用於從UI調用)
 def start_backend():
+    global songlist_process
+    
+    # 先啟動歌單控制器
+    songlist_process = start_songlist_controller()
+    
     # 在新線程中啟動藍牙服務
     def run_async_loop():
         asyncio.run(start_bluetooth_service())
@@ -996,19 +1030,88 @@ def start_backend():
     backend_thread.start()
     return backend_thread
 
-# 測試播放特定音樂
-def test_play_music(index, loop=True):
-    if index in music_files:
-        play_device_music(music_files[index], loop)
+COMM_FILE = os.path.join(tempfile.gettempdir(), "songlist_controller_comm.json")
+
+def send_command_to_songlist(command, params=None):
+    """向歌單控制器發送命令"""
+    try:
+        # 命令格式
+        cmd_data = {
+            "command": command,
+            "params": params or {},
+            "timestamp": time.time()
+        }
+        
+        # 寫入臨時文件
+        with open(COMM_FILE, 'w') as f:
+            json.dump(cmd_data, f)
+        
+        log_message(f"已發送命令到歌單控制器: {command}")
         return True
-    elif index == "RDP":
-        play_device_music(rdp_audio_files, loop=False)
+    except Exception as e:
+        log_message(f"發送命令到歌單控制器失敗: {e}")
+        return False
+
+def stop_songlist_controller():
+    global songlist_process
+    
+    if songlist_process:
+        try:
+            # 嘗試正常關閉程序
+            import signal
+            songlist_process.send_signal(signal.SIGTERM)
+            songlist_process.wait(timeout=1)
+        except:
+            # 如果無法正常關閉，則強制終止
+            try:
+                songlist_process.kill()
+            except:
+                pass
+        songlist_process = None
+        log_message("已停止歌單控制器程式")
+
+# 測試播放特定音樂
+def test_play_music(music_idx, loop=True):
+    # 對於音樂1-3，使用歌單控制器
+    if music_idx in ["1", "2", "3"]:
+        return send_command_to_songlist("PLAY_MUSIC", {
+            "index": music_idx,
+            "loop": loop
+        })
+    elif music_idx == "RDP":
+        # RDP 音效由主程式控制
+        play_device_music("ESP32_RDP_BLE", rdp_audio_files["default"], loop=False)
         return True
     return False
 
 # 獲取當前播放的音樂
 def get_current_playing_music():
     return current_playing_music
+
+def stop_current_audio():
+    """停止當前播放的所有音訊"""
+    global current_playing_music
+    
+    # 停止主程式控制的所有設備音訊
+    for device_name in device_audio_threads.keys():
+        stop_device_audio(device_name)
+    
+    # 停止歌單控制器的音訊
+    send_command_to_songlist("STOP_MUSIC")
+    
+    current_playing_music = None
+    return True
+
+def get_songlist_controller_status():
+    """獲取歌單控制器的狀態"""
+    try:
+        if os.path.exists(COMM_FILE + ".status"):
+            with open(COMM_FILE + ".status", 'r') as f:
+                status = json.load(f)
+                return status
+        return {"connected": False, "playing": None}
+    except:
+        return {"connected": False, "playing": None}
 
 def standardize_audio_file(input_file, output_file):
     """使用標準格式處理音訊檔案，確保在不同裝置上播放速度一致"""
