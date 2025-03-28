@@ -24,10 +24,10 @@ class MyServerCallbacks: public BLEServerCallbacks {
     }
 };
 
-#define SENSOR_A 33
-#define SENSOR_B 34
-#define SENSOR_C 18
-#define SENSOR_D 21
+#define SENSOR_A 15
+#define SENSOR_B 19
+#define SENSOR_C 22
+#define SENSOR_D 5
 
 volatile int lastTriggered = -1;
 volatile int secondLastTriggered = -1;

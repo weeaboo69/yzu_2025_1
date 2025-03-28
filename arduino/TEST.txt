@@ -1,0 +1,134 @@
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+// 定義 BLE 相關 UUID
+#define SERVICE_UUID        "180F" // 使用標準的電池服務 UUID
+#define CHARACTERISTIC_UUID "2A19" // 使用標準的電池等級特性 UUID
+
+const int BUTTON_12 = 12;  // 播放音檔的按鈕
+const int BUTTON_13 = 13;  // 控制錄音的按鈕
+
+bool button12State = false;  // 按鈕12的狀態
+bool button13State = false;  // 按鈕13的狀態
+
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+
+// 連接狀態回調
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      Serial.println("裝置已連接");
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      Serial.println("裝置已斷開連接");
+    }
+};
+
+void setup() {
+  Serial.begin(9600);
+  
+  // 設置按鈕引腳為輸入，並啟用內部上拉電阻
+  pinMode(BUTTON_12, INPUT_PULLUP);
+  pinMode(BUTTON_13, INPUT_PULLUP);
+  
+  Serial.println("測試遙控器已啟動 (BLE 模式)");
+  
+  // 初始化 BLE
+  BLEDevice::init("ESP32_test_remote");
+  
+  // 建立 BLE 服務器
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  
+  // 建立 BLE 服務
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  // 建立 BLE 特性
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+  
+  // 添加描述符
+  pCharacteristic->addDescriptor(new BLE2902());
+  
+  // 啟動服務
+  pService->start();
+  
+  // 啟動廣播
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // iPhone 連接參數
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+  
+  Serial.println("BLE 已啟動，等待連接...");
+}
+
+void loop() {
+  // 讀取按鈕狀態，由於使用上拉電阻，按下時為LOW
+  bool button12Pressed = !digitalRead(BUTTON_12);
+  bool button13Pressed = !digitalRead(BUTTON_13);
+  
+  // 處理按鈕12 (播放音檔)
+  if (button12Pressed && !button12State) {
+    // 按鈕剛被按下
+    Serial.println("按鈕12被按下");
+    if (deviceConnected) {
+      const char* commandStr = "BUTTON_12_PRESSED";
+      pCharacteristic->setValue((uint8_t*)commandStr, strlen(commandStr));
+      pCharacteristic->notify();
+      Serial.println("發送按鈕12按下命令");
+    }
+    button12State = true;
+    delay(50);  // 簡單的消抖
+  } else if (!button12Pressed && button12State) {
+    // 按鈕被釋放
+    button12State = false;
+    delay(50);  // 簡單的消抖
+  }
+  
+  // 處理按鈕13 (控制錄音)
+  if (button13Pressed && !button13State) {
+    // 按鈕剛被按下
+    Serial.println("按鈕13被按下");
+    if (deviceConnected) {
+      const char* commandStr = "BUTTON_13_PRESSED";
+      pCharacteristic->setValue((uint8_t*)commandStr, strlen(commandStr));
+      pCharacteristic->notify();
+      Serial.println("發送按鈕13按下命令");
+    }
+    button13State = true;
+    delay(50);  // 簡單的消抖
+  } else if (!button13Pressed && button13State) {
+    // 按鈕被釋放
+    button13State = false;
+    delay(50);  // 簡單的消抖
+  }
+  
+  // 處理重新連接
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500); // 等待 BLE 堆疊準備好
+    pServer->startAdvertising(); // 重新開始廣播
+    Serial.println("開始重新廣播");
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  // 處理新連接
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  delay(10);  // 小延遲以避免處理過快
+}

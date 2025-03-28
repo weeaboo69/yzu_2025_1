@@ -28,6 +28,7 @@ class MusicControlApp:
         self.notebook = ttk.Notebook(self.main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, pady=10)
         
+
         # 創建主控制頁
         self.control_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.control_frame, text="主控制")
@@ -633,6 +634,8 @@ class MusicControlApp:
                 backend.stop_current_audio()
                 # 停止歌單控制器
                 backend.stop_songlist_controller()
+                # 關閉所有藍牙連接 (新增這段)
+                backend.disconnect_all_devices()
                 # 等待UI更新線程結束
                 if self.update_thread.is_alive():
                     self.update_thread.join(timeout=1.0)

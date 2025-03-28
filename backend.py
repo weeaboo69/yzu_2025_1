@@ -29,6 +29,8 @@ audio_format = 2  # 預設值：16位元整數
 audio_channels = 2  # 預設值：立體聲
 audio_rate = 44100  # 預設值：44.1kHz採樣率
 songlist_process = None
+# 在全局變數部分添加
+device_clients = {}
 
 current_playing_music = None  # 目前正在播放的音樂編號
 STORAGE_DIR = r"C:\Users\maboo\yzu_2025\yzu_2025_1\recording"
@@ -45,10 +47,10 @@ BT_ADAPTERS = [
 # 裝置與適配器的映射關係
 DEVICE_ADAPTER_MAP = {
     "ESP32_MusicSensor_BLE": "hci0",  # 音樂控制器走主適配器
-    "ESP32_HornBLE": "hci1",          # 喇叭控制器也走主適配器
-    "ESP32_RDP_BLE": "hci1",          # RDP控制器走外接適配器
-    "ESP32_Wheelspeed2_BLE": "hci1",  # 輪子速度控制器走外接適配器
-    "ESP32_test_remote":"hci1"
+    "ESP32_HornBLE": "hci0",          # 喇叭控制器也走主適配器
+    "ESP32_RDP_BLE": "hci0",          # RDP控制器走外接適配器
+    "ESP32_Wheelspeed2_BLE": "hci0",  # 輪子速度控制器走外接適配器
+    "ESP32_test_remote":"hci0"
 }
 
 device_audio_threads = {
@@ -109,7 +111,7 @@ ESP32_DEVICES = [
     "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
     #"ESP32_MusicSensor_BLE",    # 歌單控制器
-    #"ESP32_test_remote"
+    "ESP32_test_remote"
 ]
 
 is_recording = False
@@ -158,6 +160,51 @@ def start_songlist_controller():
     except Exception as e:
         log_message(f"啟動歌單控制器程式失敗: {e}")
         return None
+
+# 新增到 backend.py 中
+async def _disconnect_device(client):
+    """安全斷開裝置連接的協程"""
+    try:
+        if client and client.is_connected:
+            # 先停止所有通知
+            for uuid in client.services.characteristics:
+                try:
+                    await client.stop_notify(uuid)
+                except:
+                    pass
+            # 然後斷開連接
+            await client.disconnect()
+    except Exception as e:
+        log_message(f"斷開連接時發生錯誤: {e}")
+
+def disconnect_all_devices():
+    """安全斷開所有裝置的連接"""
+    log_message("正在斷開所有藍牙連接...")
+    
+    # 建立一個新的事件循環來執行異步斷開連接操作
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # 收集所有已連接的客戶端
+    clients = []
+    for device_name in ESP32_DEVICES:
+        if device_connection_status.get(device_name, False):
+            # 假設我們有一個全局字典存儲所有客戶端
+            client = device_clients.get(device_name)
+            if client:
+                clients.append(client)
+    
+    # 為每個客戶端創建斷開連接的任務
+    tasks = [_disconnect_device(client) for client in clients]
+    
+    if tasks:
+        # 運行所有斷開連接的任務
+        loop.run_until_complete(asyncio.gather(*tasks))
+    
+    # 關閉事件循環
+    loop.close()
+    
+    log_message("所有藍牙連接已斷開")
 
 def get_credentials():
     """取得 Google Drive API 的授權憑證"""
@@ -856,6 +903,8 @@ def process_data(device_name, data):
         # 處理測試遙控器資料
         command = data.decode('utf-8')
         print(f"測試遙控器: 收到命令 {command}")
+        test_audio_file2 = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/3.wav"
+        test_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_2_before.wav"
         
         if command == "BUTTON_13_PRESSED":
             # 記錄按鈕13的狀態，用於切換錄音
@@ -871,15 +920,19 @@ def process_data(device_name, data):
                 process_data.button_13_state = True
         
         elif command == "BUTTON_12_PRESSED":
-            # 按鈕12按下，播放指定音檔
-            print("按鈕12按下，播放音檔")
-            test_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
-            # 檢查文件是否存在，如果不存在則使用默認的音樂1
-            if not os.path.exists(test_audio_file):
-                test_audio_file = music_files["1"]
-            
-            # 播放音檔
-            play_device_music(device_name, test_audio_file, loop=False)
+            print("按鈕2已按下，播放 RDP_2_before 音效")
+            # 確保有此音效文件
+            if "RDP_2_before" in rdp_audio_files:
+                play_device_music(device_name, rdp_audio_files["RDP_2_before"], loop=False)
+            else:
+                print("找不到 RDP_2_before 音效檔案")
+        elif command == "BUTTON_14_PRESSED":
+                    print("開始播放音樂1")
+                    play_device_music(device_name, test_audio_file2, loop=True)
+        elif command == "BUTTON_14_UNPRESSED":
+            print("停止播放音樂1")
+            stop_device_audio(device_name)
+
 # 回調函數，處理來自裝置的通知
 def notification_handler(uuid):
     def handler(_, data):
