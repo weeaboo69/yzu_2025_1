@@ -24,9 +24,9 @@ class MyServerCallbacks: public BLEServerCallbacks {
     }
 };
 
-#define SENSOR_A 15
-#define SENSOR_B 18
-#define SENSOR_C 19
+#define SENSOR_A 33
+#define SENSOR_B 34
+#define SENSOR_C 18
 #define SENSOR_D 21
 
 volatile int lastTriggered = -1;
@@ -45,7 +45,7 @@ void IRAM_ATTR sensorTriggered(int sensorID) {
             (secondLastTriggered == SENSOR_D && lastTriggered == SENSOR_A)) {
             Serial.println("順時針旋轉");
             if (deviceConnected) {
-              pCharacteristic->setValue(gjp4);
+              pCharacteristic->setValue("gjp4");
               pCharacteristic->notify();
               Serial.println("發送順時針");
             }
@@ -56,7 +56,7 @@ void IRAM_ATTR sensorTriggered(int sensorID) {
                    (secondLastTriggered == SENSOR_B && lastTriggered == SENSOR_A)) {
             Serial.println("逆時針旋轉");
             if (deviceConnected) {
-              pCharacteristic->setValue(su4);
+              pCharacteristic->setValue("su4");
               pCharacteristic->notify();
               Serial.println("發送逆時針");
             }

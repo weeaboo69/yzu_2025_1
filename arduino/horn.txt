@@ -16,7 +16,7 @@ const int SENSOR_PIN = 34;
 const int SENSOR_PIN_2 = 35;
 const int TOTAL_MAX = 8100;     // 總值未按壓時的最大值
 const int TOTAL_MIN = 7000;     // 總值最大按壓時的最小值
-const int BEND_THRESHOLD = 7400;  // 彎曲閾值，低於此值視為彎曲
+const int BEND_THRESHOLD = 7500;  // 彎曲閾值，低於此值視為彎曲
 const int BEND_THRESHOLD2= 7900;
 const int SEND_INTERVAL = 50;     // 藍牙發送間隔 (毫秒)
 const int MONITOR_INTERVAL = 500; // 監測數值間隔 (毫秒)
@@ -115,7 +115,7 @@ void loop() {
   bool currentlyBent2 = (totalValue >= BEND_THRESHOLD2);
   
   // 如果從未彎曲變為彎曲
-if (sensorValue2 <= 4050 && !isBent) {
+if ((sensorValue2 <= 3950 || sensorValue <= 4000) && !isBent && (currentTime - lastBendStartTime > 800)) {
   isBent = true;
   hornPlayed = false;  // 重置播放標記
   lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
@@ -131,7 +131,7 @@ if (sensorValue2 <= 4050 && !isBent) {
   }
 }
 // 如果從彎曲變為未彎曲，且已經過了防抖動時間
-else if (/*currentlyBent2 && isBent && (currentTime - lastBendStartTime > 100)*/isBent && sensorValue2 >= 4090 && (currentTime - lastBendStartTime > 100)) {
+else if ((sensorValue2 >= 4090 && sensorValue >=4095) && isBent && (currentTime - lastBendStartTime >600)) {
   isBent = false;
   Serial.println("偵測到彎曲結束");
   

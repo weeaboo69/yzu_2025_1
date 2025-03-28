@@ -19,31 +19,57 @@ import qrcode
 import os
 import pickle
 
+
+# 在檔案開頭的全域變數部分添加
+audio_buffer = []  # 原有的行
+audio_last_update_time = 0  # 新增：最後一次添加音訊數據的時間
+audio_format = 2  # 預設值：16位元整數
+audio_channels = 2  # 預設值：立體聲
+audio_rate = 44100  # 預設值：44.1kHz採樣率
+
 current_playing_music = None  # 目前正在播放的音樂編號
-audio_buffer = []  # 新增這一行
 STORAGE_DIR = r"C:\Users\maboo\yzu_2025\yzu_2025_1\recording"
 if not os.path.exists(STORAGE_DIR):
     os.makedirs(STORAGE_DIR)
+
+# 定義藍牙適配器列表
+BT_ADAPTERS = [
+    "hci0",  # 系統內建藍牙適配器
+    "hci1",  # 外接 USB 藍牙適配器 1
+    # 如果有更多...
+]
+
+# 裝置與適配器的映射關係
+DEVICE_ADAPTER_MAP = {
+    "ESP32_MusicSensor_BLE": "hci0",  # 音樂控制器走主適配器
+    "ESP32_HornBLE": "hci1",          # 喇叭控制器也走主適配器
+    "ESP32_RDP_BLE": "hci1",          # RDP控制器走外接適配器
+    "ESP32_Wheelspeed2_BLE": "hci1",  # 輪子速度控制器走外接適配器
+    "ESP32_test_remote":"hci1"
+}
 
 device_audio_threads = {
     "ESP32_HornBLE": None,
     "ESP32_Wheelspeed2_BLE": None,
     "ESP32_RDP_BLE": None,
-    "ESP32_MusicSensor_BLE": None
+    "ESP32_MusicSensor_BLE": None,
+    "ESP32_test_remote":None
 }
 
 device_stop_flags = {
     "ESP32_HornBLE": False,
     "ESP32_Wheelspeed2_BLE": False,
     "ESP32_RDP_BLE": False,
-    "ESP32_MusicSensor_BLE": False
+    "ESP32_MusicSensor_BLE": False,
+    "ESP32_test_remote":False
 }
 
 device_playback_speeds = {
     "ESP32_HornBLE": 1.0,
     "ESP32_Wheelspeed2_BLE": 1.0,
     "ESP32_RDP_BLE": 1.0,
-    "ESP32_MusicSensor_BLE": 1.0
+    "ESP32_MusicSensor_BLE": 1.0,
+    "ESP32_test_remote":1.0
 }
 
 hornPlayed = False
@@ -77,9 +103,10 @@ rdp_audio_files = {
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     "ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    "ESP32_RDP_BLE",           # 輪子觸發控制器
-    "ESP32_MusicSensor_BLE"    # 歌單控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_RDP_BLE",           # 輪子觸發控制器
+    "ESP32_MusicSensor_BLE",    # 歌單控制器
+    #"ESP32_test_remote"
 ]
 
 is_recording = False
@@ -412,10 +439,11 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
                 stream.write(chunk_data)
                 
                 # 在錄音模式下收集音訊數據
+                # 修改 play_audio_loop 函數中的這部分代碼
                 if is_recording:
                     # 將正在播放的音訊數據直接添加到錄音緩衝區
-                    # 由於我們使用的是調整後的採樣率，所以這裡直接使用原始數據即可保持相同的播放速度
                     audio_buffer.append(chunk_data)
+                    audio_last_update_time = time.time()  # 新增這行
         
         # 關閉流，準備下一次迭代
         stream.stop_stream()
@@ -485,6 +513,7 @@ def play_audio_once(device_name, file_path, speed=1.0):
             if is_recording:
                 # 將正在播放的音訊數據直接添加到錄音緩衝區
                 audio_buffer.append(chunk_data)
+                audio_last_update_time = time.time()  # 新增這行
     except Exception as e:
         print(f"播放音訊時出錯: {e}")
     finally:
@@ -564,6 +593,7 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
 
 # 處理來自ESP32的資料
 def process_data(device_name, data):
+    global stop_recording, start_recording
     # 根據裝置名稱分別處理資料
     if device_name == "ESP32_HornBLE":
     # 處理喇叭控制器資料
@@ -779,7 +809,34 @@ def process_data(device_name, data):
         elif command == "STOP_MUSIC_3":
             print("停止播放音樂3")
             stop_device_audio(device_name)
-
+    elif device_name == "ESP32_test_remote":
+        # 處理測試遙控器資料
+        command = data.decode('utf-8')
+        print(f"測試遙控器: 收到命令 {command}")
+        
+        if command == "BUTTON_13_PRESSED":
+            # 記錄按鈕13的狀態，用於切換錄音
+            if hasattr(process_data, 'button_13_state') and process_data.button_13_state:
+                # 如果已經在錄音，則停止錄音
+                print("按鈕13第二次按下，停止錄音")
+                stop_recording()
+                process_data.button_13_state = False
+            else:
+                # 開始錄音
+                print("按鈕13第一次按下，開始錄音")
+                start_recording()
+                process_data.button_13_state = True
+        
+        elif command == "BUTTON_12_PRESSED":
+            # 按鈕12按下，播放指定音檔
+            print("按鈕12按下，播放音檔")
+            test_audio_file = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav"
+            # 檢查文件是否存在，如果不存在則使用默認的音樂1
+            if not os.path.exists(test_audio_file):
+                test_audio_file = music_files["1"]
+            
+            # 播放音檔
+            play_device_music(device_name, test_audio_file, loop=False)
 # 回調函數，處理來自裝置的通知
 def notification_handler(uuid):
     def handler(_, data):
@@ -788,15 +845,28 @@ def notification_handler(uuid):
 
 # 連接到一個ESP32
 async def connect_to_device(device_name):
-    device = await BleakScanner.find_device_by_name(device_name)
+    # 獲取該裝置應該使用的適配器
+    adapter = DEVICE_ADAPTER_MAP.get(device_name, "hci0")
+    
+    # 使用指定的適配器查找裝置
+    log_message(f"使用藍牙適配器 {adapter} 搜尋 {device_name}")
+    
+    # 在指定適配器上搜尋裝置
+    device = await BleakScanner.find_device_by_name(
+        device_name, 
+        adapter=adapter
+    )
+    
     if device is None:
-        log_message(f"找不到裝置 {device_name}")
+        log_message(f"在適配器 {adapter} 上找不到裝置 {device_name}")
         return None
     
-    client = BleakClient(device)
+    # 連接裝置並返回客戶端
+    client = BleakClient(device, adapter=adapter)
     try:
         await client.connect()
-        log_message(f"已連接到 {device_name}")
+        log_message(f"已透過適配器 {adapter} 連接到 {device_name}")
+        
         # 更新連接狀態
         device_connection_status[device_name] = True
         
@@ -805,7 +875,7 @@ async def connect_to_device(device_name):
         
         return client
     except Exception as e:
-        log_message(f"連接到 {device_name} 失敗: {e}")
+        log_message(f"通過適配器 {adapter} 連接到 {device_name} 失敗: {e}")
         device_connection_status[device_name] = False
         return None
 
@@ -948,6 +1018,7 @@ def standardize_audio_file(input_file, output_file):
 def start_recording():
     """開始直接捕獲程式播放的音訊數據"""
     global is_recording, recording_thread, audio_buffer
+    global audio_last_update_time, audio_format, audio_channels, audio_rate
     
     if is_recording:
         log_message("錄音已經在進行中")
@@ -955,6 +1026,12 @@ def start_recording():
     
     # 清空並重新初始化錄音緩衝區
     audio_buffer = []
+    audio_last_update_time = time.time()
+    
+    # 設置默認音訊參數（可能會在播放時更新）
+    audio_format = 2
+    audio_channels = 2
+    audio_rate = 44100
     
     # 設置錄音標誌
     is_recording = True
@@ -993,102 +1070,44 @@ def record_audio_stream(filename):
     global is_recording, audio_buffer
     
     try:
-        # 創建帶時間戳的檔名
+        # 檔案路徑設定
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         base_filename = f"recording_{timestamp}"
         full_filename = f"{base_filename}.wav"
         file_path = os.path.join(STORAGE_DIR, full_filename)
         
-        # 創建 WAV 文件
+        # 初始化
         audio_buffer = []
         
-        # 記錄開始時間
-        start_time = time.time()
+        log_message("開始錄製音訊...")
         
-        # 持續收集音訊數據，直到停止錄音
+        # 等待直到停止錄音
         while is_recording:
-            # 短暫休眠，避免 CPU 使用率過高
-            time.sleep(0.01)
-            
-        # 錄音結束後，將收集到的數據寫入文件
+            time.sleep(0.1)
+        
+        log_message("停止錄音，正在處理音訊資料...")
+        
         if audio_buffer:
-            # 固定使用標準音訊參數
-            sample_format = 2  # 16位整數
-            channels = 2       # 立體聲
-            sample_rate = 44100  # 固定使用 44.1kHz 採樣率
+            # 確定所使用的音訊格式參數
+            # 使用固定參數，確保與播放匹配
+            channels = 2
+            sample_width = 2  # 16位元
+            frame_rate = 44100  # 44.1kHz
             
+            # 合併所有音訊資料
+            merged_audio = b''.join(audio_buffer)
+            
+            # 創建並寫入 WAV 檔案
             wf = wave.open(file_path, 'wb')
             wf.setnchannels(channels)
-            wf.setsampwidth(sample_format)
-            wf.setframerate(sample_rate)
-            
-            # 如果原音訊採樣率不是 44.1kHz，需要重新採樣
-            original_rate = None
-            
-            # 從當前播放的音訊獲取參數
-            current_device = None
-            current_file_path = None
-            
-            # 找出當前播放的設備和文件
-            for device, thread in device_audio_threads.items():
-                if thread and thread.is_alive():
-                    current_device = device
-                    break
-                    
-            if current_device and current_playing_music:
-                if current_playing_music in music_files:
-                    current_file_path = music_files[current_playing_music]
-                elif current_playing_music == "RDP":
-                    current_file_path = rdp_audio_files["default"]
-                    
-            # 獲取原始音訊的參數
-            if current_file_path and current_file_path in loaded_audio_data:
-                audio_data = loaded_audio_data[current_file_path]
-                original_rate = audio_data['rate']
-                # 計算重採樣比例
-                resample_ratio = sample_rate / original_rate
-            
-            # 處理和寫入音訊數據
-            if original_rate and original_rate != sample_rate:
-                # 需要重新採樣
-                from scipy import signal
-                import numpy as np
-                
-                # 將所有音訊數據合併為一個連續的數組
-                all_audio = b''.join(audio_buffer)
-                audio_array = np.frombuffer(all_audio, dtype=np.int16)
-                
-                # 如果是立體聲，需要分別處理左右聲道
-                if channels == 2:
-                    # 分離左右聲道
-                    left_channel = audio_array[0::2]
-                    right_channel = audio_array[1::2]
-                    
-                    # 重新採樣每個聲道
-                    new_length = int(len(left_channel) * resample_ratio)
-                    resampled_left = signal.resample(left_channel, new_length)
-                    resampled_right = signal.resample(right_channel, new_length)
-                    
-                    # 交錯合併左右聲道
-                    resampled_audio = np.empty(new_length * 2, dtype=np.int16)
-                    resampled_audio[0::2] = resampled_left.astype(np.int16)
-                    resampled_audio[1::2] = resampled_right.astype(np.int16)
-                else:
-                    # 單聲道處理
-                    new_length = int(len(audio_array) * resample_ratio)
-                    resampled_audio = signal.resample(audio_array, new_length).astype(np.int16)
-                
-                # 寫入重新採樣後的數據
-                wf.writeframes(resampled_audio.tobytes())
-            else:
-                # 直接寫入原始數據
-                for audio_chunk in audio_buffer:
-                    wf.writeframes(audio_chunk)
-            
+            wf.setsampwidth(sample_width)
+            wf.setframerate(frame_rate)
+            wf.writeframes(merged_audio)
             wf.close()
-            log_message(f"錄音已完成並儲存為 {file_path}，採樣率: 44.1kHz")
             
-            # 自動上傳到 Google Drive
+            log_message(f"錄音完成，音訊檔案已儲存到: {file_path}")
+            
+            # 上傳到 Google Drive 的代碼保持不變...
             log_message("正在自動上傳錄音檔案...")
             download_link = upload_to_google_drive(file_path)
             
@@ -1100,11 +1119,15 @@ def record_audio_stream(filename):
                 log_message(f"QR Code 已儲存至: {qr_path}")
             else:
                 log_message("上傳失敗，無法生成下載連結")
+        else:
+            log_message("未收集到任何音訊數據，錄音失敗")
         
     except Exception as e:
         log_message(f"錄音過程中發生錯誤: {e}")
         import traceback
         log_message(traceback.format_exc())
+    
+    finally:
         is_recording = False
 if __name__ == "__main__":
     # 執行主函數
