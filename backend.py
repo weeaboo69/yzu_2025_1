@@ -102,10 +102,10 @@ rdp_audio_files = {
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    "ESP32_HornBLE",           # 喇叭控制器
-    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_HornBLE",           # 喇叭控制器
+    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
-    "ESP32_MusicSensor_BLE",    # 歌單控制器
+    #"ESP32_MusicSensor_BLE",    # 歌單控制器
     #"ESP32_test_remote"
 ]
 
@@ -428,7 +428,7 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
         print(f"{device_name} 播放速度已設定為: {device_playback_speeds[device_name]}, 調整後播放率: {adjusted_rate}")
         
         # 分段播放整個檔案
-        chunk = 512
+        chunk = 256
         for i in range(0, len(original_frames), chunk * audio_data['format'] * audio_data['channels']):
             if device_stop_flags[device_name] or last_speed != device_playback_speeds[device_name]:
                 break
@@ -455,6 +455,23 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
     # 清理資源
     p.terminate()
     print(f"{device_name} 音訊播放停止")
+
+def play_wheel_music_without_stopping(file_path, loop=False, speed=1.0):
+    """不中斷先前音訊，為輪子裝置播放新的音效"""
+    device_name = "ESP32_Wheelspeed2_BLE"
+    global device_playback_speeds
+    
+    # 設定初始速度
+    device_playback_speeds[device_name] = speed
+    
+    # 啟動新的播放線程（為避免混淆，使用一個獨特的線程名）
+    wheel_thread = threading.Thread(
+        target=play_audio_once, 
+        args=(device_name, file_path, speed)
+    )
+    wheel_thread.daemon = True
+    wheel_thread.start()
+    print(f"不中斷先前播放，為 {device_name} 播放: {file_path}, 速度: {speed}")
 
 def play_audio_once(device_name, file_path, speed=1.0):
     """使用預加載的資料播放音訊一次，支援即時速度控制"""
@@ -491,7 +508,7 @@ def play_audio_once(device_name, file_path, speed=1.0):
     print(f"{device_name} 單次播放速度設定為: {speed}, 調整後播放率: {adjusted_rate}")
     
     # 使用適中的塊大小
-    chunk = 256
+    chunk = 128
     
     try:
         # 分段播放整個檔案
@@ -547,13 +564,10 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
     """開始為指定裝置播放音樂"""
     global device_audio_threads, device_playback_speeds, current_playing_music
     
-    # 先停止該裝置當前播放的音訊
-    stop_device_audio(device_name)
-    
     # 確保前一個音訊真的停止了
     if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
         device_stop_flags[device_name] = True
-        device_audio_threads[device_name].join(timeout=0.3)  # 等待最多 0.3 秒
+        device_audio_threads[device_name].join(timeout=0.1)  # 等待最多 0.1 秒
         device_audio_threads[device_name] = None
     
     # 重置停止標誌
@@ -694,17 +708,17 @@ def process_data(device_name, data):
         speed_str = data.decode('utf-8')
         if speed_str == "STOP_PLAYBACK":
             print("輪子速度控制器: 停止播放")
-            stop_device_audio(device_name)
+            #stop_device_audio(device_name)
         else:
             try:
                 if speed_str == "gjp4":
                     print("開始順時針")
-                    stop_device_audio(device_name)
-                    play_device_music(device_name, wheel_audio_file["1"], loop=False)
+                    #stop_device_audio(device_name)
+                    play_wheel_music_without_stopping(wheel_audio_file["1"], loop=False)
                 elif speed_str == "su4":
                     print("開始逆時針")
-                    stop_device_audio(device_name)
-                    play_device_music(device_name, wheel_audio_file["2"], loop=False)
+                    #stop_device_audio(device_name)
+                    play_wheel_music_without_stopping(wheel_audio_file["2"], loop=False)
             except ValueError:
                 print(f"輪子速度控制器: 無法解析資料 {speed_str}")
 
