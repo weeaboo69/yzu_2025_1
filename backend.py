@@ -504,7 +504,7 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
         print(f"{device_name} 播放速度已設定為: {device_playback_speeds[device_name]}, 調整後播放率: {adjusted_rate}")
         
         # 分段播放整個檔案
-        chunk = 256
+        chunk = 512
         for i in range(0, len(original_frames), chunk * audio_data['format'] * audio_data['channels']):
             if device_stop_flags[device_name] or last_speed != device_playback_speeds[device_name]:
                 break
@@ -584,7 +584,7 @@ def play_audio_once(device_name, file_path, speed=1.0):
     print(f"{device_name} 單次播放速度設定為: {speed}, 調整後播放率: {adjusted_rate}")
     
     # 使用適中的塊大小
-    chunk = 128
+    chunk = 256
     
     try:
         # 分段播放整個檔案
