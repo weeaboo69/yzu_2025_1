@@ -168,22 +168,45 @@ class MusicControlApp:
         ttk.Label(status_frame, text="目前播放:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         ttk.Label(status_frame, textvariable=self.current_music_var).grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
 
-        # 在音樂控制區域內容中新增錄音控制區
+            # 在音樂控制區域內容中新增錄音控制區
         record_control_frame = ttk.LabelFrame(music_frame, text="錄音控制")
         record_control_frame.pack(fill=tk.X, padx=5, pady=5)
-        
+
         # 錄音狀態顯示
         self.record_status_var = tk.StringVar(value="未錄音")
         ttk.Label(record_control_frame, text="錄音狀態:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         ttk.Label(record_control_frame, textvariable=self.record_status_var).grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
-        
+
+        # 添加設備選擇下拉框
+        ttk.Label(record_control_frame, text="錄音設備:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.device_var = tk.StringVar()
+
+        # 獲取可用的音訊設備列表
+        try:
+            import soundcard as sc
+            devices = sc.all_microphones()
+            device_names = [f"{i}: {dev.name}" for i, dev in enumerate(devices)]
+        except ImportError:
+            device_names = ["請安裝 soundcard 庫"]
+        except Exception as e:
+            device_names = [f"錯誤: {str(e)}"]
+
+        self.device_combo = ttk.Combobox(record_control_frame, textvariable=self.device_var, values=device_names)
+        self.device_combo.grid(row=1, column=1, sticky=tk.W+tk.E, padx=5, pady=5)
+        if device_names:
+            self.device_combo.current(0)
+
+        # 刷新設備列表按鈕
+        ttk.Button(record_control_frame, text="刷新設備", 
+                command=self.refresh_audio_devices).grid(row=1, column=2, padx=5, pady=5)
+
         # 錄音控制按鈕
         button_frame = ttk.Frame(record_control_frame)
-        button_frame.grid(row=1, column=0, columnspan=2, pady=5)
-        
+        button_frame.grid(row=2, column=0, columnspan=3, pady=5)
+
         ttk.Button(button_frame, text="開始錄音", 
-                command=lambda: backend.start_recording()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
-        
+                command=self.start_recording_with_device).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
+
         ttk.Button(button_frame, text="停止錄音", 
                 command=lambda: backend.stop_recording()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         
@@ -363,6 +386,49 @@ class MusicControlApp:
         ttk.Button(restart_frame, text="重新啟動歌單控制器", 
                 command=self.restart_songlist_controller).pack(side=tk.LEFT, padx=5)
     
+    def refresh_audio_devices(self):
+        """刷新可用的音訊設備列表"""
+        try:
+            import soundcard as sc
+            devices = sc.all_microphones()
+            device_names = [f"{i}: {dev.name}" for i, dev in enumerate(devices)]
+            
+            # 更新下拉框
+            self.device_combo['values'] = device_names
+            
+            # 如果有設備，選擇第一個
+            if device_names:
+                self.device_combo.current(0)
+                
+            self.update_status("已刷新音訊設備列表")
+        except ImportError:
+            messagebox.showerror("錯誤", "未安裝 soundcard 庫，請執行 'pip install soundcard' 安裝")
+        except Exception as e:
+            messagebox.showerror("錯誤", f"刷新設備列表時發生錯誤: {e}")
+
+    def start_recording_with_device(self):
+        """使用選定的設備開始錄音"""
+        try:
+            selected = self.device_combo.get()
+            if not selected:
+                messagebox.showerror("錯誤", "請選擇錄音設備")
+                return
+            
+            # 從選擇的字符串中提取設備索引
+            try:
+                device_index = int(selected.split(":")[0])
+            except:
+                messagebox.showerror("錯誤", "無法解析設備索引")
+                return
+            
+            # 調用後端的錄音函數，傳入設備索引
+            backend.start_recording(device_index)
+            
+            # 更新UI狀態
+            self.record_status_var.set("正在錄音...")
+        except Exception as e:
+            messagebox.showerror("錯誤", f"開始錄音時發生錯誤: {e}")
+
     def restart_songlist_controller(self):
         """重新啟動歌單控制器"""
         # 先停止當前的歌單控制器

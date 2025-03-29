@@ -20,6 +20,8 @@ import os
 import pickle
 import json
 import tempfile
+import sounddevice as sd
+import scipy.io.wavfile as wavfile
 
 
 # 在檔案開頭的全域變數部分添加
@@ -108,10 +110,10 @@ rdp_audio_files = {
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
-    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
     #"ESP32_MusicSensor_BLE",    # 歌單控制器
-    "ESP32_test_remote"
+    #"ESP32_test_remote"
 ]
 
 is_recording = False
@@ -516,11 +518,12 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
                 
                 # 在錄音模式下收集音訊數據
                 # 修改 play_audio_loop 函數中的這部分代碼
-                if is_recording:
-    # 將正在播放的音訊數據直接添加到錄音緩衝區
-                    audio_buffer.append(chunk_data)
-                    global audio_last_update_time
-                    audio_last_update_time = time.time()
+            if is_recording:
+                # 直接添加原始音訊數據，不做任何處理或壓縮
+                # 重要：確保完全相同的複製
+                audio_buffer_copy = chunk_data[:]  # 創建完整副本，避免引用問題
+                audio_buffer.append(audio_buffer_copy)
+                audio_last_update_time = time.time()
         
         # 關閉流，準備下一次迭代
         stream.stop_stream()
@@ -605,9 +608,10 @@ def play_audio_once(device_name, file_path, speed=1.0):
             
             # 在錄音模式下收集音訊數據
             if is_recording:
-    # 將正在播放的音訊數據直接添加到錄音緩衝區
-                audio_buffer.append(chunk_data)
-                global audio_last_update_time
+                # 直接添加原始音訊數據，不做任何處理或壓縮
+                # 重要：確保完全相同的複製
+                audio_buffer_copy = chunk_data[:]  # 創建完整副本，避免引用問題
+                audio_buffer.append(audio_buffer_copy)
                 audio_last_update_time = time.time()
     except Exception as e:
         print(f"播放音訊時出錯: {e}")
@@ -1183,63 +1187,185 @@ def standardize_audio_file(input_file, output_file):
         log_message(f"標準化音訊檔案時發生錯誤: {e}")
         return input_file
 
-def start_recording():
-    """開始直接捕獲程式播放的音訊數據"""
-    global is_recording, recording_thread, audio_buffer
-    global audio_last_update_time, audio_format, audio_channels, audio_rate
+def start_recording(selected_device_index=None):
+    """開始錄製系統音訊輸出
+    
+    Args:
+        selected_device_index: 可選的設備索引，如果提供則使用指定設備
+    """
+    global is_recording, recording_thread
     
     if is_recording:
         log_message("錄音已經在進行中")
-        return
+        return False
     
-    # 清空並重新初始化錄音緩衝區
-    audio_buffer = []
-    audio_last_update_time = time.time()
+    try:
+        import soundcard as sc
+        import numpy as np
+        import scipy.io.wavfile as wavfile
+        
+        # 設置錄音標誌
+        is_recording = True
+        
+        # 創建時間戳記
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        filename = f"recording_{timestamp}.wav"
+        file_path = os.path.join(STORAGE_DIR, filename)
+        
+        def recording_function():
+            global is_recording
+            
+            try:
+                # 列出所有音訊設備
+                speakers_list = sc.all_speakers()
+                microphones_list = sc.all_microphones()
+                
+                log_message(f"所有輸出設備: {[f'{i}: {s.name}' for i, s in enumerate(speakers_list)]}")
+                log_message(f"所有輸入設備: {[f'{i}: {m.name}' for i, m in enumerate(microphones_list)]}")
+                
+                # 如果指定了設備索引，嘗試使用指定設備
+                loopback_device = None
+                
+                if selected_device_index is not None:
+                    if selected_device_index < len(microphones_list):
+                        loopback_device = microphones_list[selected_device_index]
+                        log_message(f"使用選定的設備: {loopback_device.name}")
+                    else:
+                        log_message(f"選定的設備索引 {selected_device_index} 無效")
+                
+                # 如果沒有指定設備或指定設備無效，嘗試找到合適的設備
+                if not loopback_device:
+                    # 嘗試找到立體聲混音設備
+                    for mic in microphones_list:
+                        if "立體聲混音" in mic.name or "stereo mix" in mic.name.lower():
+                            loopback_device = mic
+                            log_message(f"找到立體聲混音設備: {mic.name}")
+                            break
+                
+                if not loopback_device and len(microphones_list) > 0:
+                    # 如果仍然沒有找到，使用第一個麥克風
+                    loopback_device = microphones_list[0]
+                    log_message(f"無法找到立體聲混音設備，使用第一個設備: {loopback_device.name}")
+                
+                if not loopback_device:
+                    raise Exception("無法找到合適的錄音設備")
+                
+                # 開始錄音
+                log_message(f"開始使用設備 {loopback_device.name} 錄製系統音訊...")
+                
+                # 使用 recorder 錄製
+                sample_rate = 44100
+                all_data = []
+                
+                with loopback_device.recorder(samplerate=sample_rate, channels=2) as recorder:
+                    idx = 0
+                    while is_recording:
+                        # 每次錄製一小段時間的數據
+                        data = recorder.record(sample_rate // 2)  # 錄製約 0.5 秒
+                        all_data.append(data)
+                        
+                        idx += 1
+                        if idx % 10 == 0:  # 每 5 秒顯示一次狀態
+                            log_message("正在錄音中...")
+                
+                # 只有在實際錄製了數據時才處理
+                if all_data:
+                    # 合併所有數據
+                    recorded_data = np.concatenate(all_data)
+                    
+                    # 將數據保存為 WAV 文件
+                    wavfile.write(file_path, sample_rate, (recorded_data * 32767).astype(np.int16))
+                    
+                    log_message(f"錄音完成，檔案已保存到: {file_path}")
+                    
+                    # 上傳到 Google Drive
+                    base_filename = os.path.splitext(os.path.basename(file_path))[0]
+                    log_message("正在自動上傳錄音檔案...")
+                    download_link = upload_to_google_drive(file_path)
+                    
+                    if download_link:
+                        # 生成 QR Code
+                        qr_path = generate_qr_code(download_link, base_filename)
+                        
+                        log_message(f"上傳成功！下載連結: {download_link}")
+                        log_message(f"QR Code 已儲存至: {qr_path}")
+                        
+                        # 更新UI顯示
+                        if ui_update_callback:
+                            ui_update_callback(f"錄音已上傳，下載連結: {download_link}")
+                    else:
+                        log_message("上傳失敗，無法生成下載連結")
+                        if ui_update_callback:
+                            ui_update_callback("錄音已完成，但上傳失敗")
+                else:
+                    log_message("未錄到任何音訊數據")
+            except Exception as e:
+                log_message(f"系統錄音過程中發生錯誤: {e}")
+                import traceback
+                log_message(traceback.format_exc())
+            finally:
+                is_recording = False
+                if ui_update_callback:
+                    ui_update_callback("錄音已完成")
+        
+        # 創建錄音線程
+        recording_thread = threading.Thread(target=recording_function)
+        recording_thread.daemon = True
+        recording_thread.start()
+        
+        # 更新UI狀態
+        if ui_update_callback:
+            ui_update_callback("開始錄音...")
+        
+        log_message("系統錄音已開始")
+        return True
     
-    # 設置固定的標準音訊參數，確保所有設備使用相同的格式
-    audio_format = 2  # 16位元整數
-    audio_channels = 2  # 立體聲
-    audio_rate = 44100  # 44.1kHz採樣率
+    except ImportError:
+        log_message("錯誤: 未安裝 soundcard 庫。請執行 'pip install soundcard' 安裝。")
+        is_recording = False
+        return False
+    except Exception as e:
+        log_message(f"啟動系統錄音失敗: {e}")
+        import traceback
+        log_message(traceback.format_exc())
+        is_recording = False
+        return False
+
+def update_recording_buffer(indata, recorded_data, frames):
+    """更新錄音緩衝區，將新捕獲的數據添加到錄音數組中"""
+    # 初始化 position 如果不存在
+    if not hasattr(update_recording_buffer, 'position'):
+        update_recording_buffer.position = 0
     
-    # 設置錄音標誌
-    is_recording = True
-    log_message("開始錄製程式音訊...")
-    
-    # 創建時間戳記
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    filename = f"recording_{timestamp}.wav"
-    
-    # 創建音訊錄製線程
-    recording_thread = threading.Thread(target=record_audio_stream, args=(filename,))
-    recording_thread.daemon = True
-    recording_thread.start()
-    
-    # 更新UI狀態
-    if ui_update_callback:
-        ui_update_callback("錄音已開始，請等待完成...")
+    # 檢查是否還有空間
+    if update_recording_buffer.position + frames <= recorded_data.shape[0]:
+        # 將數據複製到錄音陣列中
+        recorded_data[update_recording_buffer.position:update_recording_buffer.position+frames] = indata
+        update_recording_buffer.position += frames
 
 def stop_recording():
-    """停止錄製程式播放的音訊並上傳到雲端"""
+    """停止錄製系統音訊"""
     global is_recording
     
     if not is_recording:
         log_message("目前沒有進行錄音")
-        return
+        return False
     
-    # 設置停止錄音標誌
+    log_message("停止錄音...")
     is_recording = False
-    log_message("停止錄音，正在儲存檔案...")
     
     # 等待錄音線程結束
     if recording_thread and recording_thread.is_alive():
-        recording_thread.join(timeout=5.0)  # 給予更多時間處理
+        recording_thread.join(timeout=5.0)
     
     # 更新UI以顯示處理狀態
     if ui_update_callback:
-        ui_update_callback("錄音已完成，正在處理並上傳...")
+        ui_update_callback("錄音已停止，正在處理...")
+    
+    return True
 
 def record_audio_stream(filename):
-    global is_recording, audio_buffer, audio_last_update_time
+    global is_recording, audio_buffer
     
     try:
         # 檔案路徑設定
@@ -1254,31 +1380,33 @@ def record_audio_stream(filename):
         
         log_message("開始錄製音訊...")
         
-        # 等待直到停止錄音，同時添加靜默數據到緩衝區
+        # 等待直到停止錄音
         while is_recording:
-            current_time = time.time()
-            
-            # 如果超過100毫秒沒有新的音訊數據，添加靜默數據
-            if current_time - audio_last_update_time > 0.1:
-                # 生成靜默數據 (1/10 秒的立體聲靜默)
-                silence_duration = min(0.1, current_time - last_silence_check)
-                samples = int(44100 * silence_duration)
-                silence_data = b'\x00\x00' * samples * 2  # 16位立體聲 (4字節/採樣)
-                audio_buffer.append(silence_data)
-                last_silence_check = current_time
-            
-            time.sleep(0.05)  # 降低CPU使用率，但保持對靜默的敏感性
+            time.sleep(0.1)
         
         log_message("停止錄音，正在處理音訊資料...")
         
         if audio_buffer:
-            # 確定所使用的音訊格式參數 - 固定使用標準參數
-            channels = 2
+            # 使用 NumPy 來處理合併，可能比 b''.join 更有效
+            import numpy as np
+            
+            # 將所有緩衝區數據轉換為 numpy 數組
+            data_arrays = []
+            for chunk in audio_buffer:
+                # 轉換為 16 位整數數組
+                arr = np.frombuffer(chunk, dtype=np.int16)
+                data_arrays.append(arr)
+            
+            # 合併所有數組
+            merged_data = np.concatenate(data_arrays)
+            
+            # 轉換回字節
+            merged_audio = merged_data.tobytes()
+            
+            # 確保使用原始音訊的參數
+            channels = 2  # 立體聲
             sample_width = 2  # 16位元
             frame_rate = 44100  # 44.1kHz
-            
-            # 合併所有音訊資料
-            merged_audio = b''.join(audio_buffer)
             
             # 創建並寫入 WAV 檔案
             wf = wave.open(file_path, 'wb')
@@ -1290,7 +1418,7 @@ def record_audio_stream(filename):
             
             log_message(f"錄音完成，音訊檔案已儲存到: {file_path}")
             
-            # 上傳到 Google Drive
+            # 上傳到 Google Drive 的代碼保持不變...
             log_message("正在自動上傳錄音檔案...")
             download_link = upload_to_google_drive(file_path)
             
@@ -1300,10 +1428,6 @@ def record_audio_stream(filename):
                 
                 log_message(f"上傳成功！下載連結: {download_link}")
                 log_message(f"QR Code 已儲存至: {qr_path}")
-                
-                # 更新UI顯示
-                if ui_update_callback:
-                    ui_update_callback(f"錄音已上傳，下載連結: {download_link}")
             else:
                 log_message("上傳失敗，無法生成下載連結")
         else:
@@ -1316,6 +1440,8 @@ def record_audio_stream(filename):
     
     finally:
         is_recording = False
+        # 清空緩衝區，為下次錄音做準備
+        audio_buffer = []
 if __name__ == "__main__":
     # 執行主函數
     asyncio.run(start_bluetooth_service())
