@@ -108,7 +108,7 @@ rdp_audio_files = {
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
     #"ESP32_MusicSensor_BLE",    # 歌單控制器
     "ESP32_test_remote"
@@ -517,9 +517,10 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
                 # 在錄音模式下收集音訊數據
                 # 修改 play_audio_loop 函數中的這部分代碼
                 if is_recording:
-                    # 將正在播放的音訊數據直接添加到錄音緩衝區
+    # 將正在播放的音訊數據直接添加到錄音緩衝區
                     audio_buffer.append(chunk_data)
-                    audio_last_update_time = time.time()  # 新增這行
+                    global audio_last_update_time
+                    audio_last_update_time = time.time()
         
         # 關閉流，準備下一次迭代
         stream.stop_stream()
@@ -604,9 +605,10 @@ def play_audio_once(device_name, file_path, speed=1.0):
             
             # 在錄音模式下收集音訊數據
             if is_recording:
-                # 將正在播放的音訊數據直接添加到錄音緩衝區
+    # 將正在播放的音訊數據直接添加到錄音緩衝區
                 audio_buffer.append(chunk_data)
-                audio_last_update_time = time.time()  # 新增這行
+                global audio_last_update_time
+                audio_last_update_time = time.time()
     except Exception as e:
         print(f"播放音訊時出錯: {e}")
     finally:
@@ -1194,10 +1196,10 @@ def start_recording():
     audio_buffer = []
     audio_last_update_time = time.time()
     
-    # 設置默認音訊參數（可能會在播放時更新）
-    audio_format = 2
-    audio_channels = 2
-    audio_rate = 44100
+    # 設置固定的標準音訊參數，確保所有設備使用相同的格式
+    audio_format = 2  # 16位元整數
+    audio_channels = 2  # 立體聲
+    audio_rate = 44100  # 44.1kHz採樣率
     
     # 設置錄音標誌
     is_recording = True
@@ -1211,6 +1213,10 @@ def start_recording():
     recording_thread = threading.Thread(target=record_audio_stream, args=(filename,))
     recording_thread.daemon = True
     recording_thread.start()
+    
+    # 更新UI狀態
+    if ui_update_callback:
+        ui_update_callback("錄音已開始，請等待完成...")
 
 def stop_recording():
     """停止錄製程式播放的音訊並上傳到雲端"""
@@ -1226,14 +1232,14 @@ def stop_recording():
     
     # 等待錄音線程結束
     if recording_thread and recording_thread.is_alive():
-        recording_thread.join(timeout=2.0)
+        recording_thread.join(timeout=5.0)  # 給予更多時間處理
     
     # 更新UI以顯示處理狀態
     if ui_update_callback:
         ui_update_callback("錄音已完成，正在處理並上傳...")
 
 def record_audio_stream(filename):
-    global is_recording, audio_buffer
+    global is_recording, audio_buffer, audio_last_update_time
     
     try:
         # 檔案路徑設定
@@ -1244,18 +1250,29 @@ def record_audio_stream(filename):
         
         # 初始化
         audio_buffer = []
+        last_silence_check = time.time()
         
         log_message("開始錄製音訊...")
         
-        # 等待直到停止錄音
+        # 等待直到停止錄音，同時添加靜默數據到緩衝區
         while is_recording:
-            time.sleep(0.1)
+            current_time = time.time()
+            
+            # 如果超過100毫秒沒有新的音訊數據，添加靜默數據
+            if current_time - audio_last_update_time > 0.1:
+                # 生成靜默數據 (1/10 秒的立體聲靜默)
+                silence_duration = min(0.1, current_time - last_silence_check)
+                samples = int(44100 * silence_duration)
+                silence_data = b'\x00\x00' * samples * 2  # 16位立體聲 (4字節/採樣)
+                audio_buffer.append(silence_data)
+                last_silence_check = current_time
+            
+            time.sleep(0.05)  # 降低CPU使用率，但保持對靜默的敏感性
         
         log_message("停止錄音，正在處理音訊資料...")
         
         if audio_buffer:
-            # 確定所使用的音訊格式參數
-            # 使用固定參數，確保與播放匹配
+            # 確定所使用的音訊格式參數 - 固定使用標準參數
             channels = 2
             sample_width = 2  # 16位元
             frame_rate = 44100  # 44.1kHz
@@ -1273,7 +1290,7 @@ def record_audio_stream(filename):
             
             log_message(f"錄音完成，音訊檔案已儲存到: {file_path}")
             
-            # 上傳到 Google Drive 的代碼保持不變...
+            # 上傳到 Google Drive
             log_message("正在自動上傳錄音檔案...")
             download_link = upload_to_google_drive(file_path)
             
@@ -1283,6 +1300,10 @@ def record_audio_stream(filename):
                 
                 log_message(f"上傳成功！下載連結: {download_link}")
                 log_message(f"QR Code 已儲存至: {qr_path}")
+                
+                # 更新UI顯示
+                if ui_update_callback:
+                    ui_update_callback(f"錄音已上傳，下載連結: {download_link}")
             else:
                 log_message("上傳失敗，無法生成下載連結")
         else:

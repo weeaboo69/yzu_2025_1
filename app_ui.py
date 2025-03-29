@@ -604,6 +604,10 @@ class MusicControlApp:
         """定期更新UI元素"""
         while self.running:
             try:
+                if backend.is_recording:
+                    self.record_status_var.set("正在錄音...")
+                else:
+                    self.record_status_var.set("未錄音")
                 # 更新目前播放的音樂顯示
                 current_music = backend.get_current_playing_music()
                 if current_music:
