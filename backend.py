@@ -110,10 +110,10 @@ rdp_audio_files = {
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
-    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
     #"ESP32_MusicSensor_BLE",    # 歌單控制器
-    #"ESP32_test_remote"
+    "ESP32_test_remote"
 ]
 
 is_recording = False
@@ -1242,9 +1242,9 @@ def start_recording(selected_device_index=None):
                             log_message(f"找到立體聲混音設備: {mic.name}")
                             break
                 
-                if not loopback_device and len(microphones_list) > 0:
+                if not loopback_device and len(speakers_list) > 0:
                     # 如果仍然沒有找到，使用第一個麥克風
-                    loopback_device = microphones_list[0]
+                    loopback_device = speakers_list[0]
                     log_message(f"無法找到立體聲混音設備，使用第一個設備: {loopback_device.name}")
                 
                 if not loopback_device:

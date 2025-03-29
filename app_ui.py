@@ -184,7 +184,7 @@ class MusicControlApp:
         # 獲取可用的音訊設備列表
         try:
             import soundcard as sc
-            devices = sc.all_microphones()
+            devices = sc.all_speakers()
             device_names = [f"{i}: {dev.name}" for i, dev in enumerate(devices)]
         except ImportError:
             device_names = ["請安裝 soundcard 庫"]
