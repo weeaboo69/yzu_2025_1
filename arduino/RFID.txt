@@ -1,0 +1,203 @@
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <SPI.h>
+#include <MFRC522.h>
+
+// 定義 BLE 相關 UUID
+#define SERVICE_UUID        "180F" // 使用標準的電池服務 UUID
+#define CHARACTERISTIC_UUID "2A19" // 使用標準的電池等級特性 UUID
+
+// 定義 RFID 感測器的腳位
+#define RST_PIN_1     22
+#define SS_PIN_1      5
+#define RST_PIN_2     21
+#define SS_PIN_2      4
+#define RST_PIN_3     17
+#define SS_PIN_3      15
+
+// 建立 RFID 物件
+MFRC522 rfid1(SS_PIN_1, RST_PIN_1);
+MFRC522 rfid2(SS_PIN_2, RST_PIN_2);
+MFRC522 rfid3(SS_PIN_3, RST_PIN_3);
+
+// 記錄卡片狀態
+bool card1Present = false;
+bool card2Present = false;
+bool card3Present = false;
+
+// 定義每個感應器對應的合法卡片 UID (以十六進制表示)
+// 請更換為您實際卡片的 UID
+byte validCard1UID[4] = {0xA1, 0x8B, 0x28, 0x05}; // 為感應器1指定的卡片UID
+byte validCard2UID[4] = {0x0B, 0x1D, 0x2D, 0x05}; // 為感應器2指定的卡片UID
+byte validCard3UID[4] = {0x33, 0xA7, 0xB3, 0x1B}; // 為感應器3指定的卡片UID
+
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+
+// 連接狀態回調
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      Serial.println("裝置已連接");
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      Serial.println("裝置已斷開連接");
+    }
+};
+
+void setup() {
+  Serial.begin(9600);
+  SPI.begin();         // 初始化 SPI 總線
+  rfid1.PCD_Init();    // 初始化 RFID 感測器 1
+  rfid2.PCD_Init();    // 初始化 RFID 感測器 2
+  rfid3.PCD_Init();    // 初始化 RFID 感測器 3
+  
+  Serial.println("歌單控制器已啟動 (BLE 模式)");
+  
+  // 初始化 BLE
+  BLEDevice::init("ESP32_MusicSensor_BLE");
+  
+  // 建立 BLE 服務器
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  
+  // 建立 BLE 服務
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  // 建立 BLE 特性
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+  
+  // 添加描述符
+  pCharacteristic->addDescriptor(new BLE2902());
+  
+  // 啟動服務
+  pService->start();
+  
+  // 啟動廣播
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // iPhone 連接參數
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+  
+  Serial.println("BLE 已啟動，等待連接...");
+}
+
+void loop() {
+  // 檢查 RFID 感測器 1
+  checkRFIDReader(rfid1, &card1Present, validCard1UID, "PLAY_MUSIC_1", "STOP_MUSIC_1", 1);
+  
+  // 檢查 RFID 感測器 2
+  checkRFIDReader(rfid2, &card2Present, validCard2UID, "PLAY_MUSIC_2", "STOP_MUSIC_2", 2);
+  
+  // 檢查 RFID 感測器 3
+  checkRFIDReader(rfid3, &card3Present, validCard3UID, "PLAY_MUSIC_3", "STOP_MUSIC_3", 3);
+
+  // 處理重新連接
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500); // 等待 BLE 堆疊準備好
+    pServer->startAdvertising(); // 重新開始廣播
+    Serial.println("開始重新廣播");
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  // 處理新連接
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  delay(100);  // 短暫延遲
+}
+
+void checkRFIDReader(MFRC522 &rfid, bool *cardPresent, byte *validUID, const char* playCommand, const char* stopCommand, int sensorNumber) {
+  // 檢查是否有新卡片
+  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+    // 新卡片被偵測到，檢查UID是否匹配
+    bool isValidCard = true;
+    
+    // 檢查UID長度是否相同 (這裡假設UID長度為4，實際情況可能不同)
+    if (rfid.uid.size == 4) {
+      // 比對每一位UID
+      for (byte i = 0; i < rfid.uid.size; i++) {
+        if (rfid.uid.uidByte[i] != validUID[i]) {
+          isValidCard = false;
+          break;
+        }
+      }
+    } else {
+      isValidCard = false;
+    }
+    
+    // 印出讀取到的卡片UID
+    Serial.print("感應器");
+    Serial.print(sensorNumber);
+    Serial.print(" 偵測到卡片 UID: ");
+    printHex(rfid.uid.uidByte, rfid.uid.size);
+    
+    // 如果是有效卡片且之前沒有卡片存在
+    if (isValidCard && !*cardPresent) {
+      *cardPresent = true;
+      
+      Serial.print("感應器");
+      Serial.print(sensorNumber);
+      Serial.println(" 偵測到匹配的卡片");
+      
+      if (deviceConnected) {
+        pCharacteristic->setValue((uint8_t*)playCommand, strlen(playCommand));
+        pCharacteristic->notify();
+        Serial.print("已發送指令: ");
+        Serial.println(playCommand);
+      }
+    } else if (!isValidCard) {
+      Serial.print("感應器");
+      Serial.print(sensorNumber);
+      Serial.println(" 偵測到無效卡片");
+    }
+    
+    // 重要：停止讀取目前的 PICC
+    rfid.PICC_HaltA();
+    rfid.PCD_StopCrypto1();
+  } 
+  else {
+    // 檢查是否卡片已移開
+    if (*cardPresent) {
+      // 使用簡單的超時判斷方式
+      delay(50);  // 小延遲
+      if (!rfid.PICC_IsNewCardPresent()) {
+        *cardPresent = false;
+        Serial.print("感應器");
+        Serial.print(sensorNumber);
+        Serial.println(" 卡片已移開");
+        
+        if (deviceConnected) {
+          pCharacteristic->setValue((uint8_t*)stopCommand, strlen(stopCommand));
+          pCharacteristic->notify();
+          Serial.print("已發送指令: ");
+          Serial.println(stopCommand);
+        }
+      }
+    }
+  }
+}
+
+// 輔助函數：將 UID 轉換為十六進制字串
+void printHex(byte *buffer, byte bufferSize) {
+  for (byte i = 0; i < bufferSize; i++) {
+    Serial.print(buffer[i] < 0x10 ? " 0" : " ");
+    Serial.print(buffer[i], HEX);
+  }
+  Serial.println();
+}

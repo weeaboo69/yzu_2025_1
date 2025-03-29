@@ -782,21 +782,17 @@ def process_data(device_name, data):
     elif device_name == "ESP32_Wheelspeed2_BLE":
         # 處理輪子速度控制器資料
         speed_str = data.decode('utf-8')
-        if speed_str == "STOP_PLAYBACK":
-            print("輪子速度控制器: 停止播放")
-            #stop_device_audio(device_name)
-        else:
-            try:
-                if speed_str == "gjp4":
-                    print("開始順時針")
-                    #stop_device_audio(device_name)
-                    play_wheel_music_without_stopping(wheel_audio_file["1"], loop=False)
-                elif speed_str == "su4":
-                    print("開始逆時針")
-                    #stop_device_audio(device_name)
-                    play_wheel_music_without_stopping(wheel_audio_file["2"], loop=False)
-            except ValueError:
-                print(f"輪子速度控制器: 無法解析資料 {speed_str}")
+        try:
+            if speed_str == "gjp4":
+                print("開始順時針")
+                #stop_device_audio(device_name)
+                play_wheel_music_without_stopping(wheel_audio_file["1"], loop=False)
+            elif speed_str == "su4":
+                print("開始逆時針")
+                #stop_device_audio(device_name)
+                play_wheel_music_without_stopping(wheel_audio_file["2"], loop=False)
+        except ValueError:
+            print(f"輪子速度控制器: 無法解析資料 {speed_str}")
 
     elif device_name == "ESP32_RDP_BLE":
     # 處理輪子觸發控制器資料
