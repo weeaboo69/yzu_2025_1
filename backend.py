@@ -22,7 +22,11 @@ import json
 import tempfile
 import sounddevice as sd
 import scipy.io.wavfile as wavfile
+import serial
+import threading
 
+serial_device = None
+serial_connected = False
 
 # 在檔案開頭的全域變數部分添加
 audio_buffer = []  # 原有的行
@@ -33,9 +37,6 @@ audio_rate = 44100  # 預設值：44.1kHz採樣率
 songlist_process = None
 # 在全局變數部分添加
 device_clients = {}
-# 在全局變數部分添加
-serial_device = None  # 保存串口連接對象
-serial_connected = False  # 串口連接狀態
 
 current_playing_music = None  # 目前正在播放的音樂編號
 STORAGE_DIR = r"C:\Users\maboo\yzu_2025\yzu_2025_1\recording"
@@ -63,7 +64,8 @@ device_audio_threads = {
     "ESP32_Wheelspeed2_BLE": None,
     "ESP32_RDP_BLE": None,
     "ESP32_MusicSensor_BLE": None,
-    "ESP32_test_remote":None
+    "ESP32_test_remote":None,
+    "Serial_Device": None
 }
 
 device_stop_flags = {
@@ -71,7 +73,8 @@ device_stop_flags = {
     "ESP32_Wheelspeed2_BLE": False,
     "ESP32_RDP_BLE": False,
     "ESP32_MusicSensor_BLE": False,
-    "ESP32_test_remote":False
+    "ESP32_test_remote":False,
+    "Serial_Device": False
 }
 
 device_playback_speeds = {
@@ -79,7 +82,8 @@ device_playback_speeds = {
     "ESP32_Wheelspeed2_BLE": 1.0,
     "ESP32_RDP_BLE": 1.0,
     "ESP32_MusicSensor_BLE": 1.0,
-    "ESP32_test_remote":1.0
+    "ESP32_test_remote":1.0,
+    "Serial_Device": 1.0
 }
 
 hornPlayed = False
@@ -115,8 +119,8 @@ ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
     #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     #"ESP32_RDP_BLE",           # 輪子觸發控制器
-    #"ESP32_MusicSensor_BLE",    # 歌單控制器
-    "ESP32_test_remote"
+    "ESP32_MusicSensor_BLE",    # 歌單控制器
+    "ESP32_test_remote",
 ]
 
 is_recording = False
@@ -139,6 +143,61 @@ ui_update_callback = None
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 CREDENTIALS_PATH = os.path.join(STORAGE_DIR, 'credentials.json')
 TOKEN_PATH = os.path.join(STORAGE_DIR, 'token.pickle')
+
+def auto_detect_serial_port():
+    """自動偵測可用的串口"""
+    try:
+        import serial.tools.list_ports
+        ports = list(serial.tools.list_ports.comports())
+        available_ports = []
+        
+        for port in ports:
+            log_message(f"發現串口: {port.device} - {port.description}")
+            available_ports.append(port.device)
+        
+        if available_ports:
+            return available_ports
+        return None
+    except Exception as e:
+        log_message(f"自動偵測串口時發生錯誤: {e}")
+        return None
+
+def auto_connect_serial_device(preferred_ports=None):
+    
+    all_ports = auto_detect_serial_port()
+    if not all_ports:
+        log_message("未發現可用串口")
+        return False
+    
+    # 如果有指定優先埠，先嘗試連接這些埠
+    if preferred_ports:
+        for port in preferred_ports:
+            if port in all_ports:
+                try:
+                    log_message(f"嘗試連接指定的優先串口: {port}")
+                    if connect_serial_device(port):
+                        log_message(f"成功連接到指定串口: {port}")
+                        return True
+                except Exception as e:
+                    log_message(f"連接串口 {port} 時發生錯誤: {e}")
+    
+    # 如果沒有指定優先埠或優先埠連接失敗，嘗試連接所有可用的埠
+    for port in all_ports:
+        # 如果是優先埠，已經嘗試過了，跳過
+        if preferred_ports and port in preferred_ports:
+            continue
+            
+        try:
+            log_message(f"嘗試連接串口: {port}")
+            if connect_serial_device(port):
+                log_message(f"成功自動連接串口: {port}")
+                return True
+            time.sleep(0.5)  # 短暫延遲避免太快重試
+        except Exception as e:
+            log_message(f"連接串口 {port} 時發生錯誤: {e}")
+    
+    log_message("無法自動連接到有線裝置")
+    return False
 
 def start_songlist_controller():
     """啟動歌單控制器程式"""
@@ -262,11 +321,10 @@ def disconnect_all_devices():
     # 關閉事件循環
     loop.close()
     
-    log_message("所有藍牙連接已斷開")
-    
+    # 斷開串口連接
     disconnect_serial_device()
     
-    log_message("所有連接已斷開")
+    log_message("所有藍牙和串口連接已斷開")
 
 def get_credentials():
     """取得 Google Drive API 的授權憑證"""
@@ -750,8 +808,35 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
 # 處理來自ESP32的資料
 def process_data(device_name, data):
     global stop_recording, start_recording
+    if isinstance(data, bytes):
+        try:
+            command_str = data.decode('utf-8')
+        except UnicodeDecodeError:
+            # 如果不是有效的 UTF-8 編碼，那麼可能是二進制數據
+            command_str = str(data)
+    else:
+        command_str = str(data)
+    
+    log_message(f"{device_name}: 收到命令 {command_str}")
+    
+    # 處理來自有線裝置的命令（與RFID裝置邏輯相同）
+    if device_name == "Serial_Device":
+        if command_str == "PLAY_MUSIC_1":
+            print("開始播放音樂1")
+            play_device_music(device_name, music_files["1"], loop=True)
+        
+        elif command_str == "PLAY_MUSIC_2":
+            print("開始播放音樂2")
+            play_device_music(device_name, music_files["2"], loop=True)
+        
+        elif command_str == "PLAY_MUSIC_3":
+            print("開始播放音樂3")
+            play_device_music(device_name, music_files["3"], loop=True)
+        elif command_str == "STOP_MUSIC":
+            print("停止播放音樂")
+            stop_device_audio(device_name)
     # 根據裝置名稱分別處理資料
-    if device_name == "ESP32_HornBLE":
+    elif device_name == "ESP32_HornBLE":
     # 處理喇叭控制器資料
         global horn_mode_switched, hornPlayed
         
@@ -995,6 +1080,55 @@ def process_data(device_name, data):
             print("停止播放音樂1")
             stop_device_audio(device_name)
 
+def connect_serial_device(port, baudrate=9600):
+    """連接有線RFID裝置"""
+    global serial_device, serial_connected
+    
+    try:
+        serial_device = serial.Serial(port, baudrate, timeout=1)
+        serial_connected = True
+        log_message(f"已連接到有線RFID裝置，端口: {port}")
+        
+        # 啟動監聽線程
+        threading.Thread(target=listen_serial_device, daemon=True).start()
+        return True
+    except Exception as e:
+        log_message(f"連接有線RFID裝置失敗: {e}")
+        return False
+
+def listen_serial_device():
+    """監聽有線裝置傳來的訊息"""
+    global serial_device, serial_connected
+    
+    while serial_connected and serial_device:
+        try:
+            if serial_device.in_waiting > 0:
+                line = serial_device.readline().decode('utf-8').strip()
+                log_message(f"有線RFID裝置: {line}")
+                
+                # 處理命令
+                if line.startswith("PLAY_MUSIC") or line.startswith("STOP_MUSIC"):
+                    # 使用與其他裝置相同的邏輯處理命令
+                    process_data("Serial_Device", line)
+        except Exception as e:
+            log_message(f"讀取有線RFID裝置數據時發生錯誤: {e}")
+        time.sleep(0.1)
+    
+    log_message("有線RFID裝置監聽已停止")
+
+def disconnect_serial_device():
+    """斷開有線RFID裝置連接"""
+    global serial_device, serial_connected
+    
+    if serial_device:
+        try:
+            serial_connected = False
+            serial_device.close()
+            serial_device = None
+            log_message("已斷開有線RFID裝置連接")
+        except Exception as e:
+            log_message(f"斷開有線RFID裝置時發生錯誤: {e}")
+
 # 回調函數，處理來自裝置的通知
 def notification_handler(uuid):
     def handler(_, data):
@@ -1135,8 +1269,13 @@ def start_backend():
     # 先啟動歌單控制器
     songlist_process = start_songlist_controller()
     
-    # 在新線程中啟動藍牙服務
+    # 在新線程中啟動藍牙和串口服務
     def run_async_loop():
+        # 先嘗試自動連接串口裝置
+        auto_connect_result = auto_connect_serial_device(preferred_ports=['COM11'])
+        log_message(f"有線裝置自動連接結果: {auto_connect_result}")
+        
+        # 然後啟動藍牙服務
         asyncio.run(start_bluetooth_service())
     
     # 啟動後端線程

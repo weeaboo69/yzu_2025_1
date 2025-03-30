@@ -714,6 +714,7 @@ class MusicControlApp:
             except:
                 pass
             
+            self.refresh_devices()
             self.root.destroy()
 
 if __name__ == "__main__":
