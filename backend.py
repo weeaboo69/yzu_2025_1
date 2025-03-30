@@ -33,6 +33,9 @@ audio_rate = 44100  # 預設值：44.1kHz採樣率
 songlist_process = None
 # 在全局變數部分添加
 device_clients = {}
+# 在全局變數部分添加
+serial_device = None  # 保存串口連接對象
+serial_connected = False  # 串口連接狀態
 
 current_playing_music = None  # 目前正在播放的音樂編號
 STORAGE_DIR = r"C:\Users\maboo\yzu_2025\yzu_2025_1\recording"
@@ -179,6 +182,59 @@ async def _disconnect_device(client):
     except Exception as e:
         log_message(f"斷開連接時發生錯誤: {e}")
 
+def connect_serial_device(port, baudrate=9600):
+    """連接有線裝置"""
+    global serial_device, serial_connected
+    
+    try:
+        import serial
+        serial_device = serial.Serial(port, baudrate, timeout=1)
+        serial_connected = True
+        log_message(f"已連接到有線裝置，端口: {port}, 波特率: {baudrate}")
+        
+        # 啟動串口監聽線程
+        serial_thread = threading.Thread(target=serial_listener)
+        serial_thread.daemon = True
+        serial_thread.start()
+        
+        return True
+    except Exception as e:
+        log_message(f"連接有線裝置失敗: {e}")
+        serial_connected = False
+        return False
+
+def disconnect_serial_device():
+    """斷開有線裝置連接"""
+    global serial_device, serial_connected
+    
+    if serial_device and serial_connected:
+        try:
+            serial_device.close()
+            log_message("已斷開有線裝置連接")
+        except Exception as e:
+            log_message(f"斷開有線裝置時發生錯誤: {e}")
+        finally:
+            serial_connected = False
+            serial_device = None
+
+def serial_listener():
+    """監聽串口數據"""
+    global serial_device, serial_connected
+    
+    log_message("開始監聽有線裝置...")
+    
+    while serial_connected and serial_device:
+        try:
+            if serial_device.in_waiting > 0:
+                data = serial_device.readline().decode('utf-8').strip()
+                log_message(f"從有線裝置接收: {data}")
+                
+                # 處理來自有線裝置的命令，與RFID邏輯相同
+                process_data("Serial_Device", data.encode('utf-8'))
+        except Exception as e:
+            log_message(f"讀取串口數據時發生錯誤: {e}")
+            time.sleep(1)
+
 def disconnect_all_devices():
     """安全斷開所有裝置的連接"""
     log_message("正在斷開所有藍牙連接...")
@@ -207,6 +263,10 @@ def disconnect_all_devices():
     loop.close()
     
     log_message("所有藍牙連接已斷開")
+    
+    disconnect_serial_device()
+    
+    log_message("所有連接已斷開")
 
 def get_credentials():
     """取得 Google Drive API 的授權憑證"""

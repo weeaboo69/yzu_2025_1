@@ -177,8 +177,8 @@ void loop() {
       missingCount++;
       
       // 只有在連續多次未檢測到卡片時才判定卡片已移開
-      // 這裡設為5次，您可以根據實際情況調整
-      if (missingCount >= 5) {
+      // 這裡設為1次，您可以根據實際情況調整
+      if (missingCount >= 1) {
         int lastCard = currentCard;
         currentCard = 0;
         missingCount = 0;
