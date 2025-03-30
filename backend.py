@@ -2,7 +2,6 @@ import asyncio
 import numpy as np
 from bleak import BleakClient, BleakScanner
 import pyaudio
-import cv2
 import time
 import wave
 import threading
@@ -24,9 +23,13 @@ import sounddevice as sd
 import scipy.io.wavfile as wavfile
 import serial
 import threading
+from multiprocessing import Process
+import pygame
 
 serial_device = None
 serial_connected = False
+
+audio_mixer = None
 
 # 在檔案開頭的全域變數部分添加
 audio_buffer = []  # 原有的行
@@ -49,6 +52,15 @@ BT_ADAPTERS = [
     "hci1",  # 外接 USB 藍牙適配器 1
     # 如果有更多...
 ]
+
+device_audio_channels = {
+    "ESP32_HornBLE": None,
+    "ESP32_Wheelspeed2_BLE": None,
+    "ESP32_RDP_BLE": None,
+    "ESP32_MusicSensor_BLE": None,
+    "ESP32_test_remote": None,
+    "Serial_Device": None
+}
 
 # 裝置與適配器的映射關係
 DEVICE_ADAPTER_MAP = {
@@ -116,10 +128,10 @@ rdp_audio_files = {
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    #"ESP32_HornBLE",           # 喇叭控制器
+    "ESP32_HornBLE",           # 喇叭控制器
     #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    #"ESP32_RDP_BLE",           # 輪子觸發控制器
-    "ESP32_MusicSensor_BLE",    # 歌單控制器
+    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    #"ESP32_MusicSensor_BLE",    # 歌單控制器
     "ESP32_test_remote",
 ]
 
@@ -224,6 +236,15 @@ def start_songlist_controller():
     except Exception as e:
         log_message(f"啟動歌單控制器程式失敗: {e}")
         return None
+
+def initialize_audio_system():
+    global audio_mixer
+    # 使用 pygame 的混音模組 - 較容易實現多聲道混音
+    import pygame
+    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+    pygame.mixer.set_num_channels(16)  # 支援最多16個同時播放的聲音
+    audio_mixer = pygame.mixer
+    log_message("初始化音訊系統完成 (使用 pygame 混音器)")
 
 # 新增到 backend.py 中
 async def _disconnect_device(client):
@@ -748,62 +769,56 @@ def play_audio_once(device_name, file_path, speed=1.0):
 
 def stop_device_audio(device_name):
     """停止指定裝置正在播放的音訊"""
-    global device_audio_threads, device_stop_flags
+    global device_audio_threads, device_stop_flags, device_audio_channels
     
-    if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+    log_message(f"嘗試停止裝置 {device_name} 的音訊播放")
+    
+    # 如果使用 PyAudio 系統，停止線程
+    if device_name in device_audio_threads and device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
         device_stop_flags[device_name] = True
-        device_audio_threads[device_name].join(timeout=1.0)  # 等待線程結束，最多1秒
+        device_audio_threads[device_name].join(timeout=1.0)
         print(f"已停止 {device_name} 的音訊播放")
     
-    device_stop_flags[device_name] = False
-    
-    # 確保該裝置的音訊線程已經結束
-    device_audio_threads[device_name] = None
-
-def play_device_music(device_name, file_path, loop=True, speed=1.0): 
-    """開始為指定裝置播放音樂"""
-    global device_audio_threads, device_playback_speeds, current_playing_music
-    
-    # 確保前一個音訊真的停止了
-    if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-        device_stop_flags[device_name] = True
-        device_audio_threads[device_name].join(timeout=0.1)  # 等待最多 0.1 秒
-        device_audio_threads[device_name] = None
+    # 如果使用 pygame 混音系統，停止音訊通道
+    if device_name in device_audio_channels and device_audio_channels[device_name]:
+        device_audio_channels[device_name].stop()
+        device_audio_channels[device_name] = None
+        print(f"已停止 {device_name} 的 pygame 音訊播放")
     
     # 重置停止標誌
-    device_stop_flags[device_name] = False
+    if device_name in device_stop_flags:
+        device_stop_flags[device_name] = False
     
-    # 更新目前播放的音樂檔案信息
-    if device_name == "ESP32_MusicSensor_BLE":
-        # 通過文件路徑找出對應的音樂索引
-        for idx, path in music_files.items():
-            if path == file_path:
-                current_playing_music = idx
-                break
-    elif device_name == "ESP32_RDP_BLE" and file_path == rdp_audio_files:
-        current_playing_music = "RDP"
+    # 確保該裝置的音訊線程已經結束
+    if device_name in device_audio_threads:
+        device_audio_threads[device_name] = None
+
+def play_device_music(device_name, file_path, loop=True, speed=1.0):
+    global current_playing_music, audio_mixer
     
-    # 設定初始速度
-    device_playback_speeds[device_name] = speed
+    # 初始化 pygame.mixer (如果還沒初始化)
+    if audio_mixer is None:
+        initialize_audio_system()
     
-    if loop:
-        # 啟動新的播放線程
-        device_audio_threads[device_name] = threading.Thread(
-            target=play_audio_loop, 
-            args=(device_name, file_path, speed)
-        )
-        device_audio_threads[device_name].daemon = True
-        device_audio_threads[device_name].start()
-        print(f"開始為 {device_name} 循環播放: {file_path}, 速度: {speed}")
-    else:
-        # 單次播放
-        device_audio_threads[device_name] = threading.Thread(
-            target=play_audio_once, 
-            args=(device_name, file_path, speed)
-        )
-        device_audio_threads[device_name].daemon = True
-        device_audio_threads[device_name].start()
-        print(f"開始為 {device_name} 單次播放: {file_path}, 速度: {speed}")
+    # 停止該裝置先前的音效
+    if device_name in device_audio_channels and device_audio_channels[device_name]:
+        device_audio_channels[device_name].stop()
+    
+    # 載入並播放新的音效
+    try:
+        sound = audio_mixer.Sound(file_path)
+        channel = sound.play(-1 if loop else 0)
+        device_audio_channels[device_name] = channel
+        
+        # 設定音量和速度 (pygame 不直接支援速度控制，但可以控制音量)
+        if channel:
+            channel.set_volume(1.0)  # 音量設為最大
+        
+        log_message(f"開始為 {device_name} 播放: {file_path}, 循環: {loop}")
+        return True
+    except Exception as e:
+        log_message(f"播放音效失敗: {e}")
+        return False
 
 # 處理來自ESP32的資料
 def process_data(device_name, data):
@@ -833,8 +848,9 @@ def process_data(device_name, data):
             print("開始播放音樂3")
             play_device_music(device_name, music_files["3"], loop=True)
         elif command_str == "STOP_MUSIC":
-            print("停止播放音樂")
+            print("停止播放音樂zzz")
             stop_device_audio(device_name)
+
     # 根據裝置名稱分別處理資料
     elif device_name == "ESP32_HornBLE":
     # 處理喇叭控制器資料
@@ -1272,8 +1288,8 @@ def start_backend():
     # 在新線程中啟動藍牙和串口服務
     def run_async_loop():
         # 先嘗試自動連接串口裝置
-        auto_connect_result = auto_connect_serial_device(preferred_ports=['COM11'])
-        log_message(f"有線裝置自動連接結果: {auto_connect_result}")
+        #auto_connect_result = auto_connect_serial_device(preferred_ports=['COM11'])
+        #log_message(f"有線裝置自動連接結果: {auto_connect_result}")
         
         # 然後啟動藍牙服務
         asyncio.run(start_bluetooth_service())
@@ -1435,7 +1451,7 @@ def start_recording(selected_device_index=None):
                 # 如果沒有指定設備或指定設備無效，嘗試找到合適的設備
                 if not loopback_device:
                     # 嘗試找到立體聲混音設備
-                    for mic in microphones_list:
+                    for mic in speakers_list:
                         if "立體聲混音" in mic.name or "stereo mix" in mic.name.lower():
                             loopback_device = mic
                             log_message(f"找到立體聲混音設備: {mic.name}")
