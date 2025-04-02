@@ -122,7 +122,7 @@ music_files = {
 }
 rdp_audio_files = {
     "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_J.wav",  # 音樂1對應的RDP音效
-    "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_E.wav",  # 音樂2對應的RDP音效
+    "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_JZ.wav",  # 音樂2對應的RDP音效
     "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav",  # 音樂3對應的RDP音效
     "default": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav",    # 默認的RDP音效
     "RDP_2_before": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_2_before.wav",  # 按鈕2按下時播放
@@ -809,6 +809,7 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
     # 停止該裝置先前的音效
     if device_name in device_audio_channels and device_audio_channels[device_name]:
         device_audio_channels[device_name].stop()
+        time.sleep(0.05)
     
     # 載入並播放新的音效
     try:
@@ -1253,12 +1254,42 @@ def process_data(device_name, data):
         
         # 按鈕3處理邏輯
         elif command_str == "BUTTON3_PRESSED":
-            print("按鈕3已按下，循環播放 RDP_3_before 音效")
-            if "RDP_3_before" in rdp_audio_files:
-                play_device_music(device_name, rdp_audio_files["RDP_3_before"], loop=True)
+            print("按鈕3已按下，根據目前播放的音樂選擇音效")
+            
+            # 獲取目前歌單控制器播放的音樂
+            current_song = None
+            songlist_status = get_songlist_controller_status()
+            if songlist_status.get("connected", False):
+                current_song = songlist_status.get("playing")
+            
+            # 根據目前播放的音樂選擇對應的音效和播放方式
+            sound_file = rdp_audio_files.get("RDP_3_before")  # 預設音效
+            should_loop = True  # 預設循環播放
+            
+            if current_song:
+                log_message(f"歌單控制器正在播放音樂: {current_song}")
+                
+                # 根據不同的音樂選擇不同的音效和播放方式
+                if current_song == "1":
+                    sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
+                    should_loop = True  # 音樂1對應的音效循環播放
+                elif current_song == "2":
+                    sound_file = rdp_audio_files.get("2", sound_file)
+                    should_loop = False  # 音樂2對應的音效只播放一次
+                elif current_song == "3":
+                    sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
+                    should_loop = True  # 音樂3對應的音效循環播放
+                
+                log_message(f"選擇音效: {sound_file}, 循環播放: {should_loop}")
             else:
-                print("找不到 RDP_3_before 音效檔案")
-        
+                log_message("歌單控制器未播放音樂，使用預設音效")
+            
+            # 確保音效文件存在
+            if os.path.exists(sound_file):
+                play_device_music(device_name, sound_file, loop=should_loop)
+            else:
+                log_message(f"找不到音效檔案: {sound_file}")
+            
         elif command_str == "BUTTON3_RELEASED":
             print("按鈕3已放開，停止循環並播放 RDP_3_after 音效")
             # 先停止循環播放
