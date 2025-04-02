@@ -1,6 +1,13 @@
-// 有線音樂控制器 (基於RFID邏輯)
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 #include <SPI.h>
 #include <MFRC522.h>
+
+// 定義 BLE 相關 UUID
+#define SERVICE_UUID        "180F" // 使用標準的電池服務 UUID
+#define CHARACTERISTIC_UUID "2A19" // 使用標準的電池等級特性 UUID
 
 // 定義 RFID 感測器的腳位
 #define RST_PIN     22    // RST 連接到 GPIO 22
@@ -17,16 +24,69 @@ int missingCount = 0;
 
 // 定義三張卡片的 UID (以十六進制表示)
 // 請更換為您實際卡片的 UID
-byte card1UID[4] = {0x0B, 0x1D, 0x2D, 0x05}; // 第一張卡片的UID
+byte card1UID[4] = {0X15, 0xF2, 0x62, 0x05}; // 第一張卡片的UID
 byte card2UID[4] = {0xA1, 0x8B, 0x28, 0x05}; // 第二張卡片的UID
 byte card3UID[4] = {0x33, 0xA7, 0xB3, 0x1B}; // 第三張卡片的UID
+
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+
+// 連接狀態回調
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      Serial.println("裝置已連接");
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      Serial.println("裝置已斷開連接");
+    }
+};
 
 void setup() {
   Serial.begin(9600);
   SPI.begin();         // 初始化 SPI 總線
   rfid.PCD_Init();     // 初始化 RFID 感測器
   
-  Serial.println("RFID 有線音樂控制器已啟動");
+  Serial.println("RFID 音樂控制器已啟動 (BLE 模式)");
+  
+  // 初始化 BLE
+  BLEDevice::init("ESP32_MusicSensor_BLE");
+  
+  // 建立 BLE 服務器
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  
+  // 建立 BLE 服務
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  // 建立 BLE 特性
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+  
+  // 添加描述符
+  pCharacteristic->addDescriptor(new BLE2902());
+  
+  // 啟動服務
+  pService->start();
+  
+  // 啟動廣播
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // iPhone 連接參數
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+  
+  Serial.println("BLE 已啟動，等待連接...");
 }
 
 void loop() {
@@ -46,12 +106,15 @@ void loop() {
         
         Serial.print("偵測到卡片 ");
         Serial.println(currentCard);
-        if(currentCard == 1)
-          Serial.println("PLAY_MUSIC_1");
-        else if(currentCard == 2)
-          Serial.println("PLAY_MUSIC_2");
-        else if(currentCard == 3)
-          Serial.println("PLAY_MUSIC_3");  
+        
+        // 發送播放命令
+        if (deviceConnected) {
+          String command = "PLAY_MUSIC_" + String(currentCard);
+          pCharacteristic->setValue((uint8_t*)command.c_str(), command.length());
+          pCharacteristic->notify();
+          Serial.print("發送命令: ");
+          Serial.println(command);
+        }
       } else {
         Serial.println("偵測到無效卡片");
       }
@@ -77,7 +140,13 @@ void loop() {
         missingCount = 0;
       } else {
         // 是另一張卡，先發送停止命令
-        Serial.println("STOP_MUSIC");
+        if (deviceConnected) {
+          String stopCommand = "STOP_MUSIC_" + String(currentCard);
+          pCharacteristic->setValue((uint8_t*)stopCommand.c_str(), stopCommand.length());
+          pCharacteristic->notify();
+          Serial.print("發送命令: ");
+          Serial.println(stopCommand);
+        }
         
         // 然後更新當前卡片類型並發送新的播放命令
         currentCard = cardType;
@@ -86,12 +155,13 @@ void loop() {
           Serial.print("卡片已更換為卡片 ");
           Serial.println(currentCard);
           
-        if(currentCard == 1)
-          Serial.println("PLAY_MUSIC_1");
-        else if(currentCard == 2)
-          Serial.println("PLAY_MUSIC_2");
-        else if(currentCard == 3)
-          Serial.println("PLAY_MUSIC_3");
+          if (deviceConnected) {
+            String playCommand = "PLAY_MUSIC_" + String(currentCard);
+            pCharacteristic->setValue((uint8_t*)playCommand.c_str(), playCommand.length());
+            pCharacteristic->notify();
+            Serial.print("發送命令: ");
+            Serial.println(playCommand);
+          }
         } else {
           // 無效卡片，視為卡片已移開
           currentCard = 0;
@@ -107,7 +177,7 @@ void loop() {
       missingCount++;
       
       // 只有在連續多次未檢測到卡片時才判定卡片已移開
-      // 這裡設為5次，您可以根據實際情況調整
+      // 這裡設為1次，您可以根據實際情況調整
       if (missingCount >= 1) {
         int lastCard = currentCard;
         currentCard = 0;
@@ -116,9 +186,28 @@ void loop() {
         Serial.println("卡片已移開");
         
         // 發送停止命令
-        Serial.println("STOP_MUSIC");
+        if (deviceConnected) {
+          String stopCommand = "STOP_MUSIC_" + String(lastCard);
+          pCharacteristic->setValue((uint8_t*)stopCommand.c_str(), stopCommand.length());
+          pCharacteristic->notify();
+          Serial.print("發送命令: ");
+          Serial.println(stopCommand);
+        }
       }
     }
+  }
+  
+  // 處理重新連接
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500); // 等待 BLE 堆疊準備好
+    pServer->startAdvertising(); // 重新開始廣播
+    Serial.println("開始重新廣播");
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  // 處理新連接
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
   }
   
   delay(100);  // 短暫延遲

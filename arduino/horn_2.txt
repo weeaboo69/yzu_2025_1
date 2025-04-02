@@ -74,7 +74,7 @@ void setup() {
   Serial.println("彎曲感測器音效控制程式已啟動 (BLE 模式)");
   
   // 初始化 BLE
-  BLEDevice::init("ESP32_HornBLE");
+  BLEDevice::init("ESP32_HornBLE_2");
   
   // 建立 BLE 服務器
   pServer = BLEDevice::createServer();
@@ -146,7 +146,7 @@ void loop() {
   bool currentlyBent2 = (totalValue >= BEND_THRESHOLD2);
   
   // 如果從未彎曲變為彎曲
-if ((sensorValue <= 3860) && !isBent && (currentTime - lastBendStartTime > 800)) {
+if ((sensorValue2 <= 3680 || sensorValue <= 3700) && !isBent && (currentTime - lastBendStartTime > 800)) {
   isBent = true;
   hornPlayed = false;  // 重置播放標記
   lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
@@ -162,7 +162,7 @@ if ((sensorValue <= 3860) && !isBent && (currentTime - lastBendStartTime > 800))
   }
 }
 // 如果從彎曲變為未彎曲，且已經過了防抖動時間
-else if ((sensorValue >= 4050) && isBent && (currentTime - lastBendStartTime >600)) {
+else if ((sensorValue >=3800) && isBent && (currentTime - lastBendStartTime >600)) {
   isBent = false;
   Serial.println("偵測到彎曲結束");
   
@@ -176,7 +176,7 @@ else if ((sensorValue >= 4050) && isBent && (currentTime - lastBendStartTime >60
   }
 }
 
-if ((sensorValue_2 <= 4000) && !isBent2 && (currentTime - lastBendStartTime > 800)) {
+if ((sensorValue2_2 <= 3800 || sensorValue2_2 <= 3580) && !isBent2 && (currentTime - lastBendStartTime > 800)) {
   isBent2 = true;
   hornPlayed = false;  // 重置播放標記
   lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
@@ -192,7 +192,7 @@ if ((sensorValue_2 <= 4000) && !isBent2 && (currentTime - lastBendStartTime > 80
   }
 }
 // 如果從彎曲變為未彎曲，且已經過了防抖動時間
-else if ((sensorValue_2 >= 4090) && isBent2 && (currentTime - lastBendStartTime >600)) {
+else if ((sensorValue2_2 >= 3750 && sensorValue2_2 >=3600) && isBent2 && (currentTime - lastBendStartTime >600)) {
   isBent2 = false;
   Serial.println("偵測到2彎曲結束");
   
