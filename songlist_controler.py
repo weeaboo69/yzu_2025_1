@@ -53,6 +53,16 @@ def update_status():
     except Exception as e:
         log_message(f"更新狀態文件失敗: {e}")
 
+def ensure_status_file_exists():
+    if not os.path.exists(STATUS_FILE):
+        with open(STATUS_FILE, 'w') as f:
+            json.dump({
+                "connected": False,
+                "playing": None,
+                "last_update": time.time()
+            }, f)
+        print(f"已創建初始狀態文件: {STATUS_FILE}")
+
 def check_commands():
     """檢查是否有新命令"""
     if not os.path.exists(COMM_FILE):
@@ -467,3 +477,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    ensure_status_file_exists
