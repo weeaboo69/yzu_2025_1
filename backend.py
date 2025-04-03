@@ -31,6 +31,11 @@ serial_connected = False
 
 audio_mixer = None
 
+# 歌單控制器狀態變數
+songlist_connected = False
+songlist_current_playing_music = None
+songlist_last_update = time.time()
+
 # 在檔案開頭的全域變數部分添加
 audio_buffer = []  # 原有的行
 audio_last_update_time = 0  # 新增：最後一次添加音訊數據的時間
@@ -180,6 +185,44 @@ def auto_detect_serial_port():
         log_message(f"自動偵測串口時發生錯誤: {e}")
         return None
 
+# 音樂播放函數
+def songlist_play_music(index, loop=True, speed=1.0):
+    """開始播放音樂"""
+    global songlist_current_playing_music
+    
+    # 確保前一個音訊真的停止了
+    stop_device_audio("ESP32_MusicSensor_BLE")
+    
+    # 獲取音樂檔案路徑
+    if index not in music_files:
+        log_message(f"找不到音樂 {index}")
+        return False
+    
+    file_path = music_files[index]
+    
+    # 更新目前播放的音樂記錄
+    songlist_current_playing_music = index
+    log_message(f"歌單控制器: 開始播放音樂 {index}")
+    
+    # 播放音樂
+    play_device_music("ESP32_MusicSensor_BLE", file_path, loop, speed)
+    
+    return True
+
+# 停止播放函數
+def songlist_stop_music():
+    """停止播放音樂"""
+    global songlist_current_playing_music
+    
+    # 停止音訊播放
+    stop_device_audio("ESP32_MusicSensor_BLE")
+    
+    # 重置播放狀態
+    songlist_current_playing_music = None
+    
+    log_message("歌單控制器: 停止播放音樂")
+    return True
+
 def auto_connect_serial_device(preferred_ports=None):
     
     all_ports = auto_detect_serial_port()
@@ -217,6 +260,7 @@ def auto_connect_serial_device(preferred_ports=None):
     log_message("無法自動連接到有線裝置")
     return False
 
+# 移除以下函數
 def start_songlist_controller():
     """啟動歌單控制器程式"""
     import subprocess
@@ -227,21 +271,17 @@ def start_songlist_controller():
         # 取得當前目錄
         current_dir = os.path.dirname(os.path.abspath(__file__))
         songlist_path = os.path.join(current_dir, "songlist_controller.py")
-        log_path = os.path.join(current_dir, "songlist_log.txt")
         
         # 使用相同的 Python 解釋器啟動程式
         python_exe = sys.executable
         
-        # 將輸出重定向到文件
-        with open(log_path, 'w') as log_file:
-            process = subprocess.Popen(
-                [python_exe, songlist_path], 
-                stdout=log_file,
-                stderr=log_file,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
+        # 以子程序方式啟動，不等待其完成
+        process = subprocess.Popen([python_exe, songlist_path], 
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)  # 在 Windows 下隱藏命令視窗
         
-        log_message(f"已啟動歌單控制器程式，日誌輸出到 {log_path}")
+        log_message("已啟動歌單控制器程式")
         return process
     except Exception as e:
         log_message(f"啟動歌單控制器程式失敗: {e}")
@@ -804,13 +844,13 @@ def stop_device_audio(device_name):
         device_audio_threads[device_name] = None
 
 def play_device_music(device_name, file_path, loop=True, speed=1.0):
-    global current_playing_music, audio_mixer
+    global device_audio_channels, audio_mixer
     
     # 初始化 pygame.mixer (如果還沒初始化)
     if audio_mixer is None:
         initialize_audio_system()
     
-    # 停止該裝置先前的音效
+    # 停止該裝置先前的音效 (只停止同一裝置的音效，不影響其他裝置)
     if device_name in device_audio_channels and device_audio_channels[device_name]:
         device_audio_channels[device_name].stop()
         time.sleep(0.05)
@@ -821,9 +861,9 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
         channel = sound.play(-1 if loop else 0)
         device_audio_channels[device_name] = channel
         
-        # 設定音量和速度 (pygame 不直接支援速度控制，但可以控制音量)
+        # 設定音量和速度
         if channel:
-            channel.set_volume(1.0)  # 音量設為最大
+            channel.set_volume(1.0)
         
         log_message(f"開始為 {device_name} 播放: {file_path}, 循環: {loop}")
         return True
@@ -1337,6 +1377,34 @@ def process_data(device_name, data):
         elif command == "STOP_MUSIC_3":
             print("停止播放音樂3")
             stop_device_audio(device_name)
+
+    elif device_name == "ESP32_MusicSensor_BLE":
+        # 處理歌單控制器資料
+        command = data.decode('utf-8')
+        print(f"歌單控制器: 收到命令 {command}")
+        
+        # 根據命令選擇並播放對應的音樂
+        if command == "PLAY_MUSIC_1":
+            print("開始播放音樂1")
+            songlist_play_music("1", loop=True)
+        elif command == "STOP_MUSIC_1":
+            print("停止播放音樂1")
+            songlist_stop_music()
+        
+        elif command == "PLAY_MUSIC_2":
+            print("開始播放音樂2")
+            songlist_play_music("2", loop=True)
+        elif command == "STOP_MUSIC_2":
+            print("停止播放音樂2")
+            songlist_stop_music()
+        
+        elif command == "PLAY_MUSIC_3":
+            print("開始播放音樂3")
+            songlist_play_music("3", loop=True)
+        elif command == "STOP_MUSIC_3":
+            print("停止播放音樂3")
+            songlist_stop_music()
+
     elif device_name == "ESP32_test_remote":
         # 處理測試遙控器資料
         command = data.decode('utf-8')
@@ -1555,16 +1623,17 @@ async def start_bluetooth_service():
 
 # 啟動後端服務的函數 (用於從UI調用)
 def start_backend():
-    global songlist_process
+    global songlist_connected
     
-    # 先啟動歌單控制器
-    songlist_process = start_songlist_controller()
+    # 不再啟動外部歌單控制器
+    log_message("啟動整合式歌單控制器...")
+    songlist_connected = True
     
     # 在新線程中啟動藍牙和串口服務
     def run_async_loop():
         # 先嘗試自動連接串口裝置
-        #auto_connect_result = auto_connect_serial_device(preferred_ports=['COM11'])
-        #log_message(f"有線裝置自動連接結果: {auto_connect_result}")
+        # auto_connect_result = auto_connect_serial_device(preferred_ports=['COM11'])
+        # log_message(f"有線裝置自動連接結果: {auto_connect_result}")
         
         # 然後啟動藍牙服務
         asyncio.run(start_bluetooth_service())
@@ -1575,26 +1644,23 @@ def start_backend():
     backend_thread.start()
     return backend_thread
 
-COMM_FILE = os.path.join(tempfile.gettempdir(), "songlist_controller_comm.json")
-
 def send_command_to_songlist(command, params=None):
-    """向歌單控制器發送命令"""
+    """向歌單控制器發送命令 (整合後直接處理)"""
     try:
-        # 命令格式
-        cmd_data = {
-            "command": command,
-            "params": params or {},
-            "timestamp": time.time()
-        }
+        if command == "PLAY_MUSIC":
+            index = params.get("index", "1")
+            loop = params.get("loop", True)
+            return songlist_play_music(index, loop)
+        elif command == "STOP_MUSIC":
+            return songlist_stop_music()
+        elif command == "UPDATE_CONFIG":
+            # 處理配置更新，可能需要額外的實現
+            pass
         
-        # 寫入臨時文件
-        with open(COMM_FILE, 'w') as f:
-            json.dump(cmd_data, f)
-        
-        log_message(f"已發送命令到歌單控制器: {command}")
+        log_message(f"已直接處理命令: {command}")
         return True
     except Exception as e:
-        log_message(f"發送命令到歌單控制器失敗: {e}")
+        log_message(f"處理命令失敗: {e}")
         return False
 
 def stop_songlist_controller():
@@ -1615,20 +1681,6 @@ def stop_songlist_controller():
         songlist_process = None
         log_message("已停止歌單控制器程式")
 
-# 測試播放特定音樂
-def test_play_music(music_idx, loop=True):
-    # 對於音樂1-3，使用歌單控制器
-    if music_idx in ["1", "2", "3"]:
-        return send_command_to_songlist("PLAY_MUSIC", {
-            "index": music_idx,
-            "loop": loop
-        })
-    elif music_idx == "RDP":
-        # RDP 音效由主程式控制
-        play_device_music("ESP32_RDP_BLE", rdp_audio_files["default"], loop=False)
-        return True
-    return False
-
 # 獲取當前播放的音樂
 def get_current_playing_music():
     return current_playing_music
@@ -1642,38 +1694,21 @@ def stop_current_audio():
         stop_device_audio(device_name)
     
     # 停止歌單控制器的音訊
-    send_command_to_songlist("STOP_MUSIC")
+    songlist_stop_music()
     
     current_playing_music = None
     return True
 
 def get_songlist_controller_status():
     """獲取歌單控制器的狀態"""
-    status_file = COMM_FILE + ".status"
-    try:
-        if os.path.exists(status_file):
-            with open(status_file, 'r') as f:
-                status = json.load(f)
-                return status
-        else:
-            log_message(f"警告: 狀態文件不存在 {status_file}，嘗試創建...")
-            # 嘗試創建初始狀態文件
-            with open(status_file, 'w') as f:
-                initial_status = {"connected": False, "playing": None, "last_update": time.time()}
-                json.dump(initial_status, f)
-            return initial_status
-    except Exception as e:
-        log_message(f"讀取歌單控制器狀態時發生錯誤: {e}")
-        return {"connected": False, "playing": None}
-    """獲取歌單控制器的狀態"""
-    try:
-        if os.path.exists(COMM_FILE + ".status"):
-            with open(COMM_FILE + ".status", 'r') as f:
-                status = json.load(f)
-                return status
-        return {"connected": False, "playing": None}
-    except:
-        return {"connected": False, "playing": None}
+    global songlist_connected, songlist_current_playing_music
+    
+    # 現在直接返回內存中的狀態
+    return {
+        "connected": songlist_connected,
+        "playing": songlist_current_playing_music,
+        "last_update": time.time()
+    }
 
 def standardize_audio_file(input_file, output_file):
     """使用標準格式處理音訊檔案，確保在不同裝置上播放速度一致"""
