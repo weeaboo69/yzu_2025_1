@@ -1645,6 +1645,23 @@ def stop_current_audio():
 
 def get_songlist_controller_status():
     """獲取歌單控制器的狀態"""
+    status_file = COMM_FILE + ".status"
+    try:
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+                return status
+        else:
+            log_message(f"警告: 狀態文件不存在 {status_file}，嘗試創建...")
+            # 嘗試創建初始狀態文件
+            with open(status_file, 'w') as f:
+                initial_status = {"connected": False, "playing": None, "last_update": time.time()}
+                json.dump(initial_status, f)
+            return initial_status
+    except Exception as e:
+        log_message(f"讀取歌單控制器狀態時發生錯誤: {e}")
+        return {"connected": False, "playing": None}
+    """獲取歌單控制器的狀態"""
     try:
         if os.path.exists(COMM_FILE + ".status"):
             with open(COMM_FILE + ".status", 'r') as f:
@@ -1931,3 +1948,4 @@ def record_audio_stream(filename):
 if __name__ == "__main__":
     # 執行主函數
     asyncio.run(start_bluetooth_service())
+    
