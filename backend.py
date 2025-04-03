@@ -1304,48 +1304,35 @@ def process_data(device_name, data):
                 play_wheel_music_without_stopping(wheel_audio_file["2"], loop=False)
         except ValueError:
             print(f"輪子速度控制器: 無法解析資料 {speed_str}")
-
-    elif device_name == "ESP32_RDP_BLE":
-    # 處理輪子觸發控制器資料
-        command_str = data.decode('utf-8')
-        print(f"輪子觸發控制器: 收到命令 {command_str}")
-        log_message(f"當前歌單播放狀態: {songlist_current_playing_music}")
-
-        # 檢查是否為按鈕時長命令（原有功能）
-        # 按鈕3處理邏輯
-    elif device_name == "ESP32_RDP_BLE":
-    # 處理輪子觸發控制器資料
-        command_str = data.decode('utf-8')
-        print(f"輪子觸發控制器: 收到命令 {command_str}")
         
+    elif device_name == "ESP32_RDP_BLE":
+    # 處理輪子觸發控制器資料
+        command_str = data.decode('utf-8')
+        print(f"輪子觸發控制器: 收到命令 {command_str}")
+        current_song = songlist_current_playing_music
         # 按鈕3處理邏輯 (會根據當前播放音樂調整行為)
         if command_str == "BUTTON3_PRESSED":
             print("按鈕3已按下，根據目前播放的音樂選擇音效")
             
-            # 獲取目前歌單控制器播放的音樂
-            current_song = songlist_current_playing_music
-            
-            # 根據目前播放的音樂選擇對應的音效和播放方式
-            sound_file = rdp_audio_files.get("RDP_2_before")  # 預設音效
+            # 選擇對應的音效和播放方式
+            sound_file = rdp_audio_files.get("RDP_3_before")  # 預設音效
             should_loop = True  # 預設循環播放
             
             if current_song:
                 print(f"歌單控制器正在播放音樂: {current_song}")
                 
-                # 根據不同的音樂選擇不同的音效和播放方式
-                if current_song == 1:
-                    sound_file = rdp_audio_files.get("1", sound_file)
-                    play_device_music(device_name,rdp_audio_files(""),loop = False)
-                elif current_song == 2:
-                    play_device_music(device_name,rdp_audio_files("RDP_2"),loop = False)
-                elif current_song == 3:
-                    sound_file = rdp_audio_files.get("3", sound_file)
-                    play_device_music(device_name,rdp_audio_files("RDP_2_before"),loop = False)
+                # 根據不同的音樂選擇不同的音效
+                if current_song == "1":
+                    sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
+                elif current_song == "2":
+                    sound_file = rdp_audio_files.get("RDP_2", sound_file)
+                elif current_song == "3":
+                    sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
             else:
                 print("歌單控制器未播放音樂，使用預設音效")
-                play_device_music(device_name,rdp_audio_files("RDP_2_before"),loop = False ,speed = 1)
+                sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
             
-            # 確保音效文件存在
+            # 播放選定的音效
             if os.path.exists(sound_file):
                 play_device_music(device_name, sound_file, loop=should_loop)
             else:
@@ -1356,11 +1343,11 @@ def process_data(device_name, data):
             # 先停止循環播放
             stop_device_audio(device_name)
             # 播放結束音效
-            if (not current_song or (current_song == "2")):
-                if "RDP_2_after" in rdp_audio_files:
-                    play_device_music(device_name, rdp_audio_files["RDP_2_after"], loop=False)
+            if (not current_song or (current_song != "2")):
+                if "RDP_3_after" in rdp_audio_files:
+                    play_device_music(device_name, rdp_audio_files["RDP_3_after"], loop=False)
                 else:
-                    print("找不到 RDP_2_after 音效檔案")
+                    print("找不到 RDP_3_after 音效檔案")
 
     elif device_name == "ESP32_MusicSensor_BLE":
         # 處理歌單控制器資料
