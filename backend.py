@@ -227,17 +227,21 @@ def start_songlist_controller():
         # 取得當前目錄
         current_dir = os.path.dirname(os.path.abspath(__file__))
         songlist_path = os.path.join(current_dir, "songlist_controller.py")
+        log_path = os.path.join(current_dir, "songlist_log.txt")
         
         # 使用相同的 Python 解釋器啟動程式
         python_exe = sys.executable
         
-        # 以子程序方式啟動，不等待其完成
-        process = subprocess.Popen([python_exe, songlist_path], 
-                                  stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE,
-                                  creationflags=subprocess.CREATE_NO_WINDOW)  # 在 Windows 下隱藏命令視窗
+        # 將輸出重定向到文件
+        with open(log_path, 'w') as log_file:
+            process = subprocess.Popen(
+                [python_exe, songlist_path], 
+                stdout=log_file,
+                stderr=log_file,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
         
-        log_message("已啟動歌單控制器程式")
+        log_message(f"已啟動歌單控制器程式，日誌輸出到 {log_path}")
         return process
     except Exception as e:
         log_message(f"啟動歌單控制器程式失敗: {e}")
