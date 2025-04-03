@@ -43,15 +43,39 @@ controller_status = {
 def update_status():
     """更新狀態文件"""
     global controller_status
-    controller_status["last_update"] = time.time()
-    controller_status["connected"] = is_connected
-    controller_status["playing"] = current_playing_music
-    
     try:
+        # 更新狀態信息
+        controller_status["last_update"] = time.time()
+        controller_status["connected"] = is_connected
+        controller_status["playing"] = current_playing_music
+        
+        # 添加詳細的日誌
+        log_message(f"嘗試更新狀態檔案：{STATUS_FILE}")
+        log_message(f"狀態內容：連接={is_connected}, 播放={current_playing_music}")
+        
+        # 檢查路徑是否存在
+        directory = os.path.dirname(STATUS_FILE)
+        if not os.path.exists(directory):
+            log_message(f"創建目錄：{directory}")
+            os.makedirs(directory, exist_ok=True)
+        
+        # 寫入檔案
         with open(STATUS_FILE, 'w') as f:
             json.dump(controller_status, f)
+            f.flush()  # 確保數據寫入磁盤
+            os.fsync(f.fileno())  # 強制操作系統刷新文件緩衝
+        
+        # 確認檔案是否成功寫入
+        if os.path.exists(STATUS_FILE):
+            file_size = os.path.getsize(STATUS_FILE)
+            log_message(f"狀態檔案已更新，大小：{file_size} 字節")
+        else:
+            log_message("警告：寫入後狀態檔案仍不存在")
+            
     except Exception as e:
         log_message(f"更新狀態文件失敗: {e}")
+        import traceback
+        log_message(traceback.format_exc())
 
 def ensure_status_file_exists():
     if not os.path.exists(STATUS_FILE):
@@ -453,7 +477,8 @@ async def start_bluetooth_service():
 # 主函數
 def main():
     log_message("啟動歌單控制器專用程式...")
-    
+    ensure_status_file_exists()
+
     # 在新線程中啟動藍牙服務
     def run_async_loop():
         asyncio.run(start_bluetooth_service())
@@ -466,14 +491,30 @@ def main():
     # 更新初始狀態
     update_status()
     
+    # 顯示檔案路徑
+    log_message(f"命令檔案路徑: {COMM_FILE}")
+    log_message(f"狀態檔案路徑: {STATUS_FILE}")
+    
     # 主循環，檢查命令並更新狀態
+    heartbeat_counter = 0
     try:
         while True:
             check_commands()
             update_status()
+            
+            # 每隔10秒打印一次心跳信息，確認程式仍在運行
+            heartbeat_counter += 1
+            if heartbeat_counter >= 20:  # 20 * 0.5 = 10秒
+                log_message("歌單控制器仍在運行中...")
+                heartbeat_counter = 0
+                
             time.sleep(0.5)
     except KeyboardInterrupt:
         log_message("程式結束")
+    except Exception as e:
+        log_message(f"主循環發生異常: {e}")
+        import traceback
+        log_message(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
