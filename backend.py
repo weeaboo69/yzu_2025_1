@@ -843,6 +843,66 @@ def stop_device_audio(device_name):
     if device_name in device_audio_threads:
         device_audio_threads[device_name] = None
 
+def songlist_play_music_dedicated(index, loop=True, speed=1.0):
+    """專用於歌單控制器的播放函數，使用獨立的 pygame 引擎"""
+    global songlist_current_playing_music
+    
+    try:
+        # 確保 pygame 已初始化
+        if 'pygame' not in sys.modules:
+            import pygame
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            log_message("為歌單控制器初始化獨立 pygame 混音器")
+        
+        # 停止當前播放的音樂
+        if hasattr(songlist_play_music_dedicated, 'channel') and songlist_play_music_dedicated.channel:
+            songlist_play_music_dedicated.channel.stop()
+            
+        # 獲取音樂檔案路徑
+        if index not in music_files:
+            log_message(f"找不到音樂 {index}")
+            return False
+            
+        file_path = music_files[index]
+        
+        # 更新目前播放的音樂記錄
+        songlist_current_playing_music = index
+        log_message(f"歌單控制器: 開始播放音樂 {index}")
+        
+        # 載入並播放音樂
+        import pygame
+        sound = pygame.mixer.Sound(file_path)
+        channel = sound.play(-1 if loop else 0)
+        
+        # 保存引用以便後續控制
+        songlist_play_music_dedicated.sound = sound
+        songlist_play_music_dedicated.channel = channel
+        
+        return True
+    except Exception as e:
+        log_message(f"歌單控制器音樂播放失敗: {e}")
+        import traceback
+        log_message(traceback.format_exc())
+        songlist_current_playing_music = None
+        return False
+
+def songlist_stop_music_dedicated():
+    """專用於歌單控制器的停止函數"""
+    global songlist_current_playing_music
+    
+    try:
+        # 停止播放
+        if hasattr(songlist_play_music_dedicated, 'channel') and songlist_play_music_dedicated.channel:
+            songlist_play_music_dedicated.channel.stop()
+            
+        # 重置狀態
+        songlist_current_playing_music = None
+        log_message("歌單控制器: 停止播放音樂")
+        return True
+    except Exception as e:
+        log_message(f"歌單控制器停止音樂失敗: {e}")
+        return False
+
 def play_device_music(device_name, file_path, loop=True, speed=1.0):
     global device_audio_channels, audio_mixer
     
@@ -1650,9 +1710,9 @@ def send_command_to_songlist(command, params=None):
         if command == "PLAY_MUSIC":
             index = params.get("index", "1")
             loop = params.get("loop", True)
-            return songlist_play_music(index, loop)
+            return songlist_play_music_dedicated(index, loop)
         elif command == "STOP_MUSIC":
-            return songlist_stop_music()
+            return songlist_stop_music_dedicated()
         elif command == "UPDATE_CONFIG":
             # 處理配置更新，可能需要額外的實現
             pass
