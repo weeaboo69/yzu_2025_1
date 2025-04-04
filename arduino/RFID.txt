@@ -12,6 +12,7 @@
 // 定義 RFID 感測器的腳位
 #define RST_PIN     22    // RST 連接到 GPIO 22
 #define SS_PIN      21    // SDA(SS) 連接到 GPIO 21
+#define RECORD_BUTTON_PIN  4    // 錄音按鈕連接到 GPIO 4 (可以更換為其他可用的引腳)
 
 // 建立 RFID 物件
 MFRC522 rfid(SS_PIN, RST_PIN);
@@ -32,6 +33,7 @@ BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
+bool recordButtonState = false;  // 錄音按鈕的狀態
 
 // 連接狀態回調
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -51,6 +53,7 @@ void setup() {
   SPI.begin();         // 初始化 SPI 總線
   rfid.PCD_Init();     // 初始化 RFID 感測器
   
+  pinMode(RECORD_BUTTON_PIN, INPUT_PULLUP);  // 設置錄音按鈕為輸入，啟用內部上拉電阻
   Serial.println("RFID 音樂控制器已啟動 (BLE 模式)");
   
   // 初始化 BLE
@@ -90,7 +93,33 @@ void setup() {
 }
 
 void loop() {
+  bool recordButtonPressed = !digitalRead(RECORD_BUTTON_PIN);
   // 如果先前沒有卡片
+
+  if (recordButtonPressed && !recordButtonState) {
+  // 按鈕剛被按下
+  Serial.println("錄音按鈕被按下");
+  if (deviceConnected) {
+    const char* commandStr = "START_RECORDING";
+    pCharacteristic->setValue((uint8_t*)commandStr, strlen(commandStr));
+    pCharacteristic->notify();
+    Serial.println("發送開始錄音命令");
+  }
+  recordButtonState = true;
+  delay(50);  // 簡單的消抖
+} else if (!recordButtonPressed && recordButtonState) {
+  // 按鈕被釋放
+  Serial.println("錄音按鈕被釋放");
+  if (deviceConnected) {
+    const char* commandStr = "STOP_RECORDING";
+    pCharacteristic->setValue((uint8_t*)commandStr, strlen(commandStr));
+    pCharacteristic->notify();
+    Serial.println("發送停止錄音命令");
+  }
+  recordButtonState = false;
+  delay(50);  // 簡單的消抖
+}
+
   if (currentCard == 0) {
     // 檢查是否有新卡片
     if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {

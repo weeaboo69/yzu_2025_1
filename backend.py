@@ -25,6 +25,7 @@ import serial
 import threading
 from multiprocessing import Process
 import pygame
+import sys
 
 serial_device = None
 serial_connected = False
@@ -140,9 +141,9 @@ ESP32_DEVICES = [
     #"ESP32_HornBLE",           # 喇叭控制器
     #"ESP32_HornBLE_2",
     #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
-    "ESP32_RDP_BLE",           # 輪子觸發控制器
+    #"ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE",    # 歌單控制器
-    "ESP32_test_remote",
+    #"ESP32_test_remote",
 ]
 
 is_recording = False
@@ -1375,6 +1376,13 @@ def process_data(device_name, data):
         elif command == "STOP_MUSIC_3":
             print("停止播放音樂3")
             songlist_stop_music()
+
+        elif command == "START_RECORDING":
+            print("開始錄音")
+            start_recording()
+        elif command == "STOP_RECORDING":
+            print("停止錄音")
+            stop_recording()
 
     elif device_name == "ESP32_test_remote":
         # 處理測試遙控器資料
