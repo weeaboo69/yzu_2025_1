@@ -44,6 +44,9 @@ audio_format = 2  # 預設值：16位元整數
 audio_channels = 2  # 預設值：立體聲
 audio_rate = 44100  # 預設值：44.1kHz採樣率
 songlist_process = None
+
+GDRIVE_FOLDER_ID = "1H9Mp6ctGRFP0_PXRZ8ugjIJWVJu-lcVY"  # 設定 Google Drive 上傳資料夾 ID
+
 # 在全局變數部分添加
 device_clients = {}
 
@@ -428,26 +431,60 @@ def get_credentials():
 def authenticate_google_drive():
     """認證 Google Drive API"""
     creds = None
+    token_valid = False
+    
     # 嘗試從保存的令牌文件加載憑證
     if os.path.exists(TOKEN_PATH):
-        with open(TOKEN_PATH, 'rb') as token:
-            creds = pickle.load(token)
-    # 如果沒有可用的憑證或已過期，則重新授權
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+        try:
+            with open(TOKEN_PATH, 'rb') as token:
+                creds = pickle.load(token)
+            
+            # 檢查令牌是否有效
+            if creds and creds.valid:
+                token_valid = True
+            elif creds and creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                    token_valid = True
+                except Exception as e:
+                    log_message(f"令牌刷新失敗: {e}")
+                    # 令牌刷新失敗，刪除舊令牌
+                    os.remove(TOKEN_PATH)
+                    creds = None
+        except Exception as e:
+            log_message(f"載入令牌失敗: {e}")
+            creds = None
+    
+    # 如果沒有有效的令牌，重新授權
+    if not token_valid:
+        try:
+            # 檢查憑證文件是否存在
+            if not os.path.exists(CREDENTIALS_PATH):
+                log_message(f"找不到 Google API 憑證文件: {CREDENTIALS_PATH}")
+                return None
+                
             flow = InstalledAppFlow.from_client_secrets_file(
                 CREDENTIALS_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
-        # 保存令牌以供下次使用
-        with open(TOKEN_PATH, 'wb') as token:
-            pickle.dump(creds, token)
+            
+            # 保存令牌以供下次使用
+            with open(TOKEN_PATH, 'wb') as token:
+                pickle.dump(creds, token)
+                
+            log_message("已成功獲取新的 Google Drive 認證令牌")
+        except Exception as e:
+            log_message(f"無法獲取新的認證令牌: {e}")
+            return None
     
     return creds
 
-def upload_to_google_drive(file_path):
-    """上傳文件到 Google Drive 並設置為公開可訪問"""
+def upload_to_google_drive(file_path, folder_id=None):
+    """上傳文件到 Google Drive 中指定的資料夾並設置為公開可訪問
+    
+    Args:
+        file_path: 要上傳的檔案路徑
+        folder_id: Google Drive 資料夾的 ID，如果為 None 則上傳到根目錄
+    """
     try:
         # 正規化路徑
         file_path = os.path.normpath(file_path)
@@ -478,14 +515,24 @@ def upload_to_google_drive(file_path):
         
         # 認證並構建服務
         creds = authenticate_google_drive()
-        service = build('drive', 'v3', credentials=creds)
+        if not creds:
+            log_message("Google Drive 認證失敗，無法上傳檔案")
+            log_message(f"錄音檔案已保存在本地: {file_path}")
+            # 返回本地檔案路徑作為備用
+            return f"本地檔案: {file_path}"
         
         # 檔案元數據
         file_metadata = {
             'name': os.path.basename(file_path)
         }
         
+        # 如果提供了資料夾 ID，將檔案上傳到該資料夾
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+            log_message(f"將檔案上傳到指定資料夾，資料夾 ID: {folder_id}")
+        
         # 上傳媒體文件
+        service = build('drive', 'v3', credentials=creds)
         media = MediaFileUpload(file_path, resumable=True)
         file = service.files().create(body=file_metadata,
                                      media_body=media,
@@ -519,7 +566,9 @@ def upload_to_google_drive(file_path):
         import traceback
         log_message(f"詳細錯誤信息: {traceback.format_exc()}")
         
-        return None
+        # 返回本地檔案路徑作為備用
+        log_message(f"錄音檔案已保存在本地: {file_path}")
+        return f"本地檔案: {file_path}"
 
 def generate_qr_code(url, filename="download_link"):
     """生成 QR Code 並保存為圖片"""
@@ -1724,6 +1773,7 @@ def start_recording(selected_device_index=None):
         import soundcard as sc
         import numpy as np
         import scipy.io.wavfile as wavfile
+        import time
         
         # 設置錄音標誌
         is_recording = True
@@ -1738,71 +1788,63 @@ def start_recording(selected_device_index=None):
             
             try:
                 # 列出所有音訊設備
-                speakers_list = sc.all_speakers()
-                microphones_list = sc.all_microphones()
+                speakers = sc.all_speakers()
+                mics = sc.all_microphones(include_loopback=True)
                 
-                log_message(f"所有輸出設備: {[f'{i}: {s.name}' for i, s in enumerate(speakers_list)]}")
-                log_message(f"所有輸入設備: {[f'{i}: {m.name}' for i, m in enumerate(microphones_list)]}")
+                log_message(f"所有輸出設備: {[f'{i}: {s.name}' for i, s in enumerate(speakers)]}")
+                log_message(f"所有輸入設備: {[f'{i}: {m.name}' for i, m in enumerate(mics)]}")
                 
                 # 如果指定了設備索引，嘗試使用指定設備
-                loopback_device = None
+                input_device = None
                 
                 if selected_device_index is not None:
-                    if selected_device_index < len(microphones_list):
-                        loopback_device = microphones_list[selected_device_index]
-                        log_message(f"使用選定的設備: {loopback_device.name}")
+                    if selected_device_index < len(mics):
+                        input_device = mics[selected_device_index]
+                        log_message(f"使用選定的輸入設備: {input_device.name}")
                     else:
                         log_message(f"選定的設備索引 {selected_device_index} 無效")
                 
-                # 如果沒有指定設備或指定設備無效，嘗試找到合適的設備
-                if not loopback_device:
-                    # 嘗試找到立體聲混音設備
-                    for mic in speakers_list:
-                        if "立體聲混音" in mic.name or "stereo mix" in mic.name.lower():
-                            loopback_device = mic
-                            log_message(f"找到立體聲混音設備: {mic.name}")
-                            break
+                # 如果沒有指定設備或指定設備無效，使用默認設備
+                if not input_device:
+                    input_device = mics[0]
+                    log_message(f"使用默認輸入設備: {input_device.name}")
                 
-                if not loopback_device and len(speakers_list) > 0:
-                    # 如果仍然沒有找到，使用第一個麥克風
-                    loopback_device = speakers_list[0]
-                    log_message(f"無法找到立體聲混音設備，使用第一個設備: {loopback_device.name}")
+                # 設定採樣率
+                sample_rate = 148000
                 
-                if not loopback_device:
-                    raise Exception("無法找到合適的錄音設備")
+                log_message(f"開始使用設備 {input_device.name} 錄製音訊...")
                 
-                # 開始錄音
-                log_message(f"開始使用設備 {loopback_device.name} 錄製系統音訊...")
-                
-                # 使用 recorder 錄製
-                sample_rate = 44100
-                all_data = []
-                
-                with loopback_device.recorder(samplerate=sample_rate, channels=2) as recorder:
-                    idx = 0
+                # 使用 soundcard 錄製
+                with input_device.recorder(samplerate=sample_rate) as mic:
+                    # 分段錄製並持續監控 is_recording 狀態
+                    chunk_size = sample_rate // 2  # 每次錄製 0.5 秒
+                    all_data = []
+                    
+                    count = 0
                     while is_recording:
-                        # 每次錄製一小段時間的數據
-                        data = recorder.record(sample_rate // 2)  # 錄製約 0.5 秒
-                        all_data.append(data)
+                        chunk = mic.record(numframes=chunk_size)
+                        all_data.append(chunk)
                         
-                        idx += 1
-                        if idx % 10 == 0:  # 每 5 秒顯示一次狀態
+                        count += 1
+                        if count % 4 == 0:  # 每 2 秒顯示一次狀態
                             log_message("正在錄音中...")
                 
-                # 只有在實際錄製了數據時才處理
+                # 合併所有錄製的數據片段
                 if all_data:
-                    # 合併所有數據
-                    recorded_data = np.concatenate(all_data)
+                    combined_data = np.concatenate(all_data, axis=0)
                     
-                    # 將數據保存為 WAV 文件
-                    wavfile.write(file_path, sample_rate, (recorded_data * 32767).astype(np.int16))
+                    # 將浮點數組轉換為 16 位整數
+                    int_data = (combined_data * 32767).astype(np.int16)
+                    
+                    # 保存 WAV 文件
+                    wavfile.write(file_path, sample_rate, int_data)
                     
                     log_message(f"錄音完成，檔案已保存到: {file_path}")
                     
                     # 上傳到 Google Drive
                     base_filename = os.path.splitext(os.path.basename(file_path))[0]
                     log_message("正在自動上傳錄音檔案...")
-                    download_link = upload_to_google_drive(file_path)
+                    download_link = upload_to_google_drive(file_path, folder_id=GDRIVE_FOLDER_ID)
                     
                     if download_link:
                         # 生成 QR Code
@@ -1819,7 +1861,8 @@ def start_recording(selected_device_index=None):
                         if ui_update_callback:
                             ui_update_callback("錄音已完成，但上傳失敗")
                 else:
-                    log_message("未錄到任何音訊數據")
+                    log_message("沒有錄製到任何音訊數據")
+                
             except Exception as e:
                 log_message(f"系統錄音過程中發生錯誤: {e}")
                 import traceback
@@ -1941,7 +1984,7 @@ def record_audio_stream(filename):
             
             # 上傳到 Google Drive 的代碼保持不變...
             log_message("正在自動上傳錄音檔案...")
-            download_link = upload_to_google_drive(file_path)
+            download_link = upload_to_google_drive(file_path, folder_id=GDRIVE_FOLDER_ID)
             
             if download_link:
                 # 生成 QR Code
