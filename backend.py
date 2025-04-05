@@ -135,15 +135,31 @@ rdp_audio_files = {
     "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav",  # 音樂3對應的RDP音效
     "default": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav",    # 默認的RDP音效
     "RDP_2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_2.wav",  # 按鈕2按下時播放
+    "RDP_2_before": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_2_before.wav", # 按鈕3按下時循環播放
+    "RDP_2_after": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_2_after.wav",   # 按鈕3放開時播放
     "RDP_3_before": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_3_before.wav", # 按鈕3按下時循環播放
-    "RDP_3_after": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_3_after.wav"   # 按鈕3放開時播放
+    "RDP_3_after": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_3_after.wav",   # 按鈕3放開時播放
+    "city_1_before": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/City_1_before.wav", # 按鈕3按下時循環播放
+    "city_1_after": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/City_1_after.wav",   # 按鈕3放開時播放
+    "city_2_before": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/City_2_before.wav", # 按鈕3按下時循環播放
+    "city_2_after": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/City_2_after.wav"   # 按鈕3放開時播放
+}
+
+device_channel_mapping = {
+    "ESP32_HornBLE": 0,
+    "ESP32_HornBLE_2": 1,
+    "ESP32_Wheelspeed2_BLE": 2,
+    "ESP32_RDP_BLE": 3,
+    "ESP32_MusicSensor_BLE": 4,
+    "ESP32_test_remote": 5,
+    "Serial_Device": 6
 }
 
 # 設定ESP32裝置的UUID
 ESP32_DEVICES = [
-    #"ESP32_HornBLE",           # 喇叭控制器
-    #"ESP32_HornBLE_2",
-    #"ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
+    "ESP32_HornBLE",           # 喇叭控制器
+    "ESP32_HornBLE_2",
+    "ESP32_Wheelspeed2_BLE",   # 輪子速度控制器
     "ESP32_RDP_BLE",           # 輪子觸發控制器
     "ESP32_MusicSensor_BLE",    # 歌單控制器
     #"ESP32_test_remote",
@@ -777,19 +793,38 @@ def play_audio_loop(device_name, file_path, initial_speed=1.0):
 def play_wheel_music_without_stopping(file_path, loop=False, speed=1.0):
     """不中斷先前音訊，為輪子裝置播放新的音效"""
     device_name = "ESP32_Wheelspeed2_BLE"
-    global device_playback_speeds
+    global device_playback_speeds, audio_mixer, device_audio_channels
     
     # 設定初始速度
     device_playback_speeds[device_name] = speed
     
-    # 啟動新的播放線程（為避免混淆，使用一個獨特的線程名）
-    wheel_thread = threading.Thread(
-        target=play_audio_once, 
-        args=(device_name, file_path, speed)
-    )
-    wheel_thread.daemon = True
-    wheel_thread.start()
-    print(f"不中斷先前播放，為 {device_name} 播放: {file_path}, 速度: {speed}")
+    # 初始化 pygame.mixer (如果還沒初始化)
+    if audio_mixer is None:
+        initialize_audio_system()
+    
+    # 載入並播放新的音效
+    try:
+        sound = audio_mixer.Sound(file_path)
+        
+        # 獲取輪子裝置的固定頻道編號
+        wheel_channel_num = device_channel_mapping.get(device_name, 2)  # 預設使用頻道2
+        
+        # 使用第二個輪子頻道 (假設我們為輪子裝置分配兩個頻道)
+        wheel_effect_channel_num = wheel_channel_num + 7  # 使用更高頻道號碼，避免與主頻道衝突
+        
+        # 獲取指定頻道
+        channel = audio_mixer.Channel(wheel_effect_channel_num)
+        
+        # 在該頻道上播放音效
+        channel.play(sound, -1 if loop else 0)
+        
+        # 不存儲到 device_audio_channels 中，讓它獨立播放
+        
+        log_message(f"不中斷先前播放，為 {device_name} 播放: {file_path}, 速度: {speed}, 頻道: {wheel_effect_channel_num}")
+        return True
+    except Exception as e:
+        log_message(f"播放輪子音效失敗: {e}")
+        return False
 
 def play_audio_once(device_name, file_path, speed=1.0):
     """使用預加載的資料播放音訊一次，支援即時速度控制"""
@@ -967,14 +1002,25 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
     # 載入並播放新的音效
     try:
         sound = audio_mixer.Sound(file_path)
-        channel = sound.play(-1 if loop else 0)
+        
+        # 獲取裝置的固定頻道編號，如果沒有則使用下一個可用頻道
+        channel_num = device_channel_mapping.get(device_name, -1)
+        
+        if channel_num >= 0:
+            # 使用固定頻道
+            channel = audio_mixer.Channel(channel_num)
+            channel.play(sound, -1 if loop else 0)
+        else:
+            # 使用任意可用頻道
+            channel = sound.play(-1 if loop else 0)
+        
         device_audio_channels[device_name] = channel
         
         # 設定音量和速度
         if channel:
             channel.set_volume(1.0)
         
-        log_message(f"開始為 {device_name} 播放: {file_path}, 循環: {loop}")
+        log_message(f"開始為 {device_name} 播放: {file_path}, 循環: {loop}, 頻道: {channel_num if channel_num >= 0 else '自動'}")
         return True
     except Exception as e:
         log_message(f"播放音效失敗: {e}")
@@ -1375,9 +1421,9 @@ def process_data(device_name, data):
                 if current_song == "1":
                     sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
                 elif current_song == "2":
-                    sound_file = rdp_audio_files.get("RDP_2", sound_file)
+                    sound_file = rdp_audio_files.get("RDP_2_before", sound_file)
                 elif current_song == "3":
-                    sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
+                    sound_file = rdp_audio_files.get("city_2_before", sound_file)
             else:
                 print("歌單控制器未播放音樂，使用預設音效")
                 sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
@@ -1393,11 +1439,17 @@ def process_data(device_name, data):
             # 先停止循環播放
             stop_device_audio(device_name)
             # 播放結束音效
-            if (not current_song or (current_song != "2")):
+            if (current_song == "2"):
+                if "RDP_2_after" in rdp_audio_files:
+                    play_device_music(device_name, rdp_audio_files["RDP_2_after"], loop=False)
+                else:
+                    print("找不到 RDP_2_after 音效檔案")
+            elif(current_song == "3"):
+                if "city_1_after" in rdp_audio_files:
+                    play_device_music(device_name, rdp_audio_files["city_2_after"], loop=False)
+            else:
                 if "RDP_3_after" in rdp_audio_files:
                     play_device_music(device_name, rdp_audio_files["RDP_3_after"], loop=False)
-                else:
-                    print("找不到 RDP_3_after 音效檔案")
 
     elif device_name == "ESP32_MusicSensor_BLE":
         # 處理歌單控制器資料
