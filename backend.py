@@ -514,12 +514,13 @@ def authenticate_google_drive():
     
     return creds
 
-def upload_to_google_drive(file_path, folder_id=None):
+def upload_to_google_drive(file_path, folder_id=None, fixed_filename=None):
     """上傳文件到 Google Drive 中指定的資料夾並設置為公開可訪問
     
     Args:
         file_path: 要上傳的檔案路徑
         folder_id: Google Drive 資料夾的 ID，如果為 None 則上傳到根目錄
+        fixed_filename: 固定的檔案名稱，如果為 None 則使用原始檔名
     """
     try:
         # 正規化路徑
@@ -557,32 +558,74 @@ def upload_to_google_drive(file_path, folder_id=None):
             # 返回本地檔案路徑作為備用
             return f"本地檔案: {file_path}"
         
+        # 確定檔案名稱
+        if fixed_filename:
+            file_name = fixed_filename
+        else:
+            file_name = os.path.basename(file_path)
+        
+        service = build('drive', 'v3', credentials=creds)
+        
+        # 檢查是否已存在同名檔案
+        existing_file_id = None
+        query = f"name = '{file_name}'"
+        if folder_id:
+            query += f" and '{folder_id}' in parents"
+            
+        results = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name)'
+        ).execute()
+        
+        items = results.get('files', [])
+        if items:
+            existing_file_id = items[0]['id']
+            log_message(f"找到現有檔案，ID: {existing_file_id}，將進行更新")
+        
         # 檔案元數據
         file_metadata = {
-            'name': os.path.basename(file_path)
+            'name': file_name
         }
         
-        # 如果提供了資料夾 ID，將檔案上傳到該資料夾
-        if folder_id:
+        # 如果提供了資料夾 ID 且不是更新現有檔案，則設置父資料夾
+        if folder_id and not existing_file_id:
             file_metadata['parents'] = [folder_id]
             log_message(f"將檔案上傳到指定資料夾，資料夾 ID: {folder_id}")
         
         # 上傳媒體文件
-        service = build('drive', 'v3', credentials=creds)
         media = MediaFileUpload(file_path, resumable=True)
-        file = service.files().create(body=file_metadata,
-                                     media_body=media,
-                                     fields='id').execute()
+        
+        if existing_file_id:
+            # 更新現有檔案
+            file = service.files().update(
+                fileId=existing_file_id,
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            ).execute()
+            log_message("已成功更新現有檔案")
+        else:
+            # 創建新檔案
+            file = service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            ).execute()
+            log_message("已成功創建新檔案")
         
         # 設置檔案為任何人都能查看
-        permission = {
-            'type': 'anyone',
-            'role': 'reader'
-        }
-        service.permissions().create(
-            fileId=file.get('id'),
-            body=permission
-        ).execute()
+        try:
+            permission = {
+                'type': 'anyone',
+                'role': 'reader'
+            }
+            service.permissions().create(
+                fileId=file.get('id'),
+                body=permission
+            ).execute()
+        except Exception as e:
+            log_message(f"設定權限時發生錯誤: {e}")
         
         # 獲取檔案的共享連結
         file = service.files().get(
@@ -591,7 +634,7 @@ def upload_to_google_drive(file_path, folder_id=None):
         ).execute()
         
         download_link = file.get('webViewLink')
-        log_message(f"已成功上傳檔案到 Google Drive，下載連結: {download_link}")
+        log_message(f"檔案可從此連結訪問: {download_link}")
         
         return download_link
         
@@ -1300,36 +1343,6 @@ def process_data(device_name, data):
             horn_file = horn_audio_file_after[current_horn_set[device_name]]
             play_device_music(device_name, horn_file, loop=False)
             
-        else:
-            position = data[0]  # 播放位置 (0-100)
-            print(f"喇叭控制器: 設定播放位置 {position}%")
-            
-            # 檢查是否是第一次偵測到值增加
-            static_last_position = getattr(process_data, 'last_position', 0)
-            
-            # 如果現在位置比上一次增加了20以上，且還沒有切換過模式，且已經在播放音效
-            if position < static_last_position - 8 and not horn_mode_switched[device_name] and hornPlayed:
-                # 確保目前的音效真的在播放
-                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                    # 切換到 after 音效
-                    horn_mode_switched[device_name] = True
-                    print("喇叭控制器: 偵測到彎曲程度增加超過20，切換到新音效")
-                    # 停止當前播放並播放新音效
-                    stop_device_audio(device_name)
-                    
-                    # 確保先前的音效真的停止了
-                    time.sleep(0.1)
-                    if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                        device_stop_flags[device_name] = True
-                        device_audio_threads[device_name].join(timeout=0.3)
-                        device_audio_threads[device_name] = None
-                    
-                    print(f"喇叭控制器: 播放新音效 {horn_audio_file_after}")
-                    play_device_music(device_name, horn_audio_file_after, loop=False)
-                    hornPlayed = True
-            
-            # 更新上次的位置值
-            process_data.last_position = position
     elif device_name == "ESP32_Wheelspeed2_BLE":
         # 處理輪子速度控制器資料
         speed_str = data.decode('utf-8')
@@ -1983,7 +1996,8 @@ def record_audio_stream(filename):
             
             # 上傳到 Google Drive 的代碼保持不變...
             log_message("正在自動上傳錄音檔案...")
-            download_link = upload_to_google_drive(file_path, folder_id=GDRIVE_FOLDER_ID)
+            fixed_filename = "latest_recording.wav"  # 或其他您想要的固定檔名
+            download_link = upload_to_google_drive(file_path, folder_id=GDRIVE_FOLDER_ID, fixed_filename=fixed_filename)
             
             if download_link:
                 # 生成 QR Code
