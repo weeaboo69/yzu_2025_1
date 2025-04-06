@@ -72,6 +72,11 @@ device_audio_channels = {
     "Serial_Device": None
 }
 
+current_horn_set = {
+    "ESP32_HornBLE": "1",    # 默認使用第一組
+    "ESP32_HornBLE_2": "1"   # 默認使用第一組
+}
+
 # 裝置與適配器的映射關係
 DEVICE_ADAPTER_MAP = {
     "ESP32_MusicSensor_BLE": "hci0",  # 音樂控制器走主適配器
@@ -113,12 +118,25 @@ device_playback_speeds = {
 }
 
 hornPlayed = False
-horn_mode_switched = False
+horn_mode_switched = {
+    "ESP32_HornBLE": False,
+    "ESP32_HornBLE_2": False
+}
 audio_stream = None  # 用於儲存音訊流的全局變數
 loaded_audio_data = {}
 
-horn_audio_file_before = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_before.wav"  # 切換前的喇叭音效
-horn_audio_file_after = "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_after.wav"   # 切換後的喇叭音效
+horn_audio_file_before = {
+    "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_before.wav",  # 第一組
+    "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn2_before.wav", # 第二組
+    "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn3_before.wav"  # 第三組
+}
+
+horn_audio_file_after = {
+    "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn_after.wav",   # 第一組
+    "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn2_after.wav",  # 第二組
+    "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/horn3_after.wav"   # 第三組
+}
+
 wheel_audio_file = {
     "1": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound_before.wav",
     "2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/wheel_sound_after.wav",
@@ -135,6 +153,8 @@ rdp_audio_files = {
     "3": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav",  # 音樂3對應的RDP音效
     "default": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP.wav",    # 默認的RDP音效
     "RDP_2": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_2.wav",  # 按鈕2按下時播放
+    "RDP_1_before": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_1_before.wav", # 按鈕3按下時循環播放
+    "RDP_1_after": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_1_after.wav",   # 按鈕3放開時播放
     "RDP_2_before": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_2_before.wav", # 按鈕3按下時循環播放
     "RDP_2_after": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_2_after.wav",   # 按鈕3放開時播放
     "RDP_3_before": "C:/Users/maboo/yzu_2025/yzu_2025_1/audio/RDP_3_before.wav", # 按鈕3按下時循環播放
@@ -697,34 +717,38 @@ def preload_audio_files():
             print(f"已加載饅頭音效: {file_path}")
         except Exception as e:
             print(f"加載 {file_path} 時發生錯誤: {e}")
-    try:
-        wf = wave.open(horn_audio_file_before, 'rb')
-        audio_data = {
-            'format': wf.getsampwidth(),
-            'channels': wf.getnchannels(),
-            'rate': wf.getframerate(),
-            'frames': wf.readframes(wf.getnframes())
-        }
-        loaded_audio_data[horn_audio_file_before] = audio_data
-        wf.close()
-        print(f"已加載: {horn_audio_file_before}")
-    except Exception as e:
-        print(f"加載 {horn_audio_file_before} 時發生錯誤: {e}")
+            
+    # 加載 horn_before 音效集
+    for key, file_path in horn_audio_file_before.items():
+        try:
+            wf = wave.open(file_path, 'rb')
+            audio_data = {
+                'format': wf.getsampwidth(),
+                'channels': wf.getnchannels(),
+                'rate': wf.getframerate(),
+                'frames': wf.readframes(wf.getnframes())
+            }
+            loaded_audio_data[file_path] = audio_data
+            wf.close()
+            print(f"已加載 horn_before_{key}: {file_path}")
+        except Exception as e:
+            print(f"加載 {file_path} 時發生錯誤: {e}")
 
-    # 加載切換後的喇叭音效
-    try:
-        wf = wave.open(horn_audio_file_after, 'rb')
-        audio_data = {
-            'format': wf.getsampwidth(),
-            'channels': wf.getnchannels(),
-            'rate': wf.getframerate(),
-            'frames': wf.readframes(wf.getnframes())
-        }
-        loaded_audio_data[horn_audio_file_after] = audio_data
-        wf.close()
-        print(f"已加載: {horn_audio_file_after}")
-    except Exception as e:
-        print(f"加載 {horn_audio_file_after} 時發生錯誤: {e}")
+    # 加載 horn_after 音效集
+    for key, file_path in horn_audio_file_after.items():
+        try:
+            wf = wave.open(file_path, 'rb')
+            audio_data = {
+                'format': wf.getsampwidth(),
+                'channels': wf.getnchannels(),
+                'rate': wf.getframerate(),
+                'frames': wf.readframes(wf.getnframes())
+            }
+            loaded_audio_data[file_path] = audio_data
+            wf.close()
+            print(f"已加載 horn_after_{key}: {file_path}")
+        except Exception as e:
+            print(f"加載 {file_path} 時發生錯誤: {e}")
 
 def play_audio_loop(device_name, file_path, initial_speed=1.0):
     """使用預加載的資料循環播放音訊，支援速度控制"""
@@ -1028,7 +1052,7 @@ def play_device_music(device_name, file_path, loop=True, speed=1.0):
 
 # 處理來自ESP32的資料
 def process_data(device_name, data):
-    global stop_recording, start_recording
+    global stop_recording, start_recording, hornPlayed, horn_mode_switched
     if isinstance(data, bytes):
         try:
             command_str = data.decode('utf-8')
@@ -1062,173 +1086,195 @@ def process_data(device_name, data):
         
         if data[0] == 254:  # 播放指令 (開始彎曲)
             print(f"喇叭控制器: 偵測到彎曲開始, hornPlayed={hornPlayed}")
-
-            # 確保沒有其他音效正在播放
-            if not hornPlayed:
-                # 先徹底停止任何可能正在播放的音效
-                stop_device_audio(device_name)
-                
-                # 強制終止其他可能存在的播放線程
-                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                    device_stop_flags[device_name] = True
-                    print("喇叭控制器: 等待先前的音效停止...")
-                    device_audio_threads[device_name].join(timeout=0.3)  # 等待線程結束
-                    device_audio_threads[device_name] = None  # 明確釋放線程引用
-                
-                # 確保標誌正確設置後再播放
-                device_stop_flags[device_name] = False
-                
-                print(f"喇叭控制器: 開始播放音效 {horn_audio_file_before}")
-                play_device_music(device_name, horn_audio_file_before, loop=False)
-                
-                # 標記已播放
-                hornPlayed = True
-                # 初始化最後的位置值
-                process_data.last_position = 0
-                # 重置模式切換狀態
-                horn_mode_switched = False
-                    
-        elif data[0] == 253:  # 停止指令 (停止彎曲)
-            print(f"喇叭控制器: 偵測到彎曲結束")
+            current_horn_set[device_name] = "1"  # 設置為第一組
             
-            # 設置停止標誌
-            device_stop_flags[device_name] = True
+            # 重置標誌，強制播放
+            hornPlayed = False  # 將此標誌設為 False，確保音效會播放
             
-            # 最多嘗試5次停止
-            for attempt in range(5):
-                # 設置停止標誌
+            # 先徹底停止任何可能正在播放的音效
+            stop_device_audio(device_name)
+            
+            # 強制終止其他可能存在的播放線程
+            if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
                 device_stop_flags[device_name] = True
-                
-                # 等待一小段時間
-                time.sleep(0.1)
-                
-                # 檢查線程是否還在運行
-                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                    print(f"喇叭控制器: 停止嘗試 {attempt+1}/5")
-                else:
-                    print("喇叭控制器: 音效已成功停止")
-                    break
-
-        if data[0] == 252:  # 播放指令 (開始彎曲)
-            print(f"喇叭控制器: 偵測到彎曲開始, hornPlayed={hornPlayed}")
-
-            # 確保沒有其他音效正在播放
-            if not hornPlayed:
-                # 先徹底停止任何可能正在播放的音效
-                stop_device_audio(device_name)
-                
-                # 強制終止其他可能存在的播放線程
-                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                    device_stop_flags[device_name] = True
-                    print("喇叭控制器: 等待先前的音效停止...")
-                    device_audio_threads[device_name].join(timeout=0.3)  # 等待線程結束
-                    device_audio_threads[device_name] = None  # 明確釋放線程引用
-                
-                # 確保標誌正確設置後再播放
-                device_stop_flags[device_name] = False
-                
-                print(f"喇叭控制器: 開始播放音效 {horn_audio_file_before}")
-                play_device_music(device_name, horn_audio_file_before, loop=False)
-                
-                # 標記已播放
-                hornPlayed = True
-                # 初始化最後的位置值
-                process_data.last_position = 0
-                # 重置模式切換狀態
-                horn_mode_switched = False
-                    
-        elif data[0] == 251:  # 停止指令 (停止彎曲)
-            print(f"喇叭控制器: 偵測到彎曲結束")
+                print("喇叭控制器: 等待先前的音效停止...")
+                device_audio_threads[device_name].join(timeout=0.3)  # 等待線程結束
+                device_audio_threads[device_name] = None  # 明確釋放線程引用
             
-            # 設置停止標誌
-            device_stop_flags[device_name] = True
-            
-            # 最多嘗試5次停止
-            for attempt in range(5):
-                # 設置停止標誌
-                device_stop_flags[device_name] = True
-                
-                # 等待一小段時間
-                time.sleep(0.1)
-                
-                # 檢查線程是否還在運行
-                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                    print(f"喇叭控制器: 停止嘗試 {attempt+1}/5")
-                else:
-                    print("喇叭控制器: 音效已成功停止")
-                    break
-
-            # 無論如何，都清空音訊線程引用
-            device_audio_threads[device_name] = None
-            
-            # 重置所有狀態標誌
-            horn_mode_switched = False
-            hornPlayed = False
+            # 確保標誌正確設置後再播放
             device_stop_flags[device_name] = False
             
-            print("喇叭控制器: 已徹底重置所有音效和狀態")
-            play_device_music(device_name, horn_audio_file_after, loop=False)
+            # 選擇對應組別的 before 音效
+            horn_file = horn_audio_file_before[current_horn_set[device_name]]
+            print(f"喇叭控制器: 嘗試播放開始音效 {horn_file}")
             
-        else:
-            position = data[0]  # 播放位置 (0-100)
-            print(f"喇叭控制器: 設定播放位置 {position}%")
+            # 直接使用 pygame 播放
+            try:
+                if audio_mixer is None:
+                    initialize_audio_system()
+                
+                sound = audio_mixer.Sound(horn_file)
+                channel = audio_mixer.Channel(0)  # 使用頻道0
+                channel.play(sound)
+                print("喇叭控制器: 已使用 pygame 播放開始音效")
+                hornPlayed = True
+            except Exception as e:
+                print(f"喇叭控制器: pygame 播放開始音效失敗 {e}")
+                # 如果 pygame 播放失敗，嘗試使用原始方法
+                success = play_device_music(device_name, horn_file, loop=False)
+                print(f"喇叭控制器: 使用原始方法播放結果: {success}")
+                hornPlayed = True
             
-            # 檢查是否是第一次偵測到值增加
-            static_last_position = getattr(process_data, 'last_position', 0)
+            # 初始化最後的位置值
+            process_data.last_position = 0
+            # 重置模式切換狀態
+            horn_mode_switched = False
+                    
+        elif data[0] == 253:  # 停止指令 (停止彎曲) - 使用第一組對應的 after
+            print(f"喇叭控制器: 偵測到彎曲結束")
             
-            # 如果現在位置比上一次增加了20以上，且還沒有切換過模式，且已經在播放音效
-            if position < static_last_position - 8 and not horn_mode_switched and hornPlayed:
-                # 確保目前的音效真的在播放
+            # 設置停止標誌
+            device_stop_flags[device_name] = True
+            
+            # 最多嘗試5次停止
+            for attempt in range(5):
+                # 設置停止標誌
+                device_stop_flags[device_name] = True
+                
+                # 等待一小段時間
+                time.sleep(0.1)
+                
+                # 檢查線程是否還在運行
                 if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                    # 切換到 after 音效
-                    horn_mode_switched = True
-                    print("喇叭控制器: 偵測到彎曲程度增加超過20，切換到新音效")
-                    # 停止當前播放並播放新音效
-                    stop_device_audio(device_name)
-                    
-                    # 確保先前的音效真的停止了
-                    time.sleep(0.1)
-                    if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                        device_stop_flags[device_name] = True
-                        device_audio_threads[device_name].join(timeout=0.3)
-                        device_audio_threads[device_name] = None
-                    
-                    print(f"喇叭控制器: 播放新音效 {horn_audio_file_after}")
-                    play_device_music(device_name, horn_audio_file_after, loop=False)
-                    hornPlayed = True
+                    print(f"喇叭控制器: 停止嘗試 {attempt+1}/5")
+                else:
+                    print("喇叭控制器: 音效已成功停止")
+                    break
+
+            # 播放對應組別的 after 音效
+            horn_file = horn_audio_file_after[current_horn_set[device_name]]
+            play_device_music(device_name, horn_file, loop=False)
+
+        elif data[0] == 252:  # 播放指令 (開始彎曲)
+            print(f"喇叭控制器: 偵測到彎曲開始, hornPlayed={hornPlayed}")
+            current_horn_set[device_name] = "2"  # 設置為第2組
             
-            # 更新上次的位置值
-            process_data.last_position = position
+            # 重置標誌，強制播放
+            hornPlayed = False  # 將此標誌設為 False，確保音效會播放
+            
+            # 先徹底停止任何可能正在播放的音效
+            stop_device_audio(device_name)
+            
+            # 強制終止其他可能存在的播放線程
+            if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                device_stop_flags[device_name] = True
+                print("喇叭控制器: 等待先前的音效停止...")
+                device_audio_threads[device_name].join(timeout=0.3)  # 等待線程結束
+                device_audio_threads[device_name] = None  # 明確釋放線程引用
+            
+            # 確保標誌正確設置後再播放
+            device_stop_flags[device_name] = False
+            
+            # 選擇對應組別的 before 音效
+            horn_file = horn_audio_file_before[current_horn_set[device_name]]
+            print(f"喇叭控制器: 嘗試播放開始音效 {horn_file}")
+            
+            # 直接使用 pygame 播放
+            try:
+                if audio_mixer is None:
+                    initialize_audio_system()
+                
+                sound = audio_mixer.Sound(horn_file)
+                channel = audio_mixer.Channel(0)  # 使用頻道0
+                channel.play(sound)
+                print("喇叭控制器: 已使用 pygame 播放開始音效")
+                hornPlayed = True
+            except Exception as e:
+                print(f"喇叭控制器: pygame 播放開始音效失敗 {e}")
+                # 如果 pygame 播放失敗，嘗試使用原始方法
+                success = play_device_music(device_name, horn_file, loop=False)
+                print(f"喇叭控制器: 使用原始方法播放結果: {success}")
+                hornPlayed = True
+            
+            # 初始化最後的位置值
+            process_data.last_position = 0
+            # 重置模式切換狀態
+            horn_mode_switched = False
+                    
+        elif data[0] == 251:  # 停止指令 (停止彎曲) - 使用第二組對應的 after
+            print(f"喇叭控制器: 偵測到彎曲結束")
+            
+            # 設置停止標誌
+            device_stop_flags[device_name] = True
+            
+            # 最多嘗試5次停止
+            for attempt in range(5):
+                # 設置停止標誌
+                device_stop_flags[device_name] = True
+                
+                # 等待一小段時間
+                time.sleep(0.1)
+                
+                # 檢查線程是否還在運行
+                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                    print(f"喇叭控制器: 停止嘗試 {attempt+1}/5")
+                else:
+                    print("喇叭控制器: 音效已成功停止")
+                    break
+
+            # 播放第二組的 after 音效
+            horn_file = horn_audio_file_after[current_horn_set[device_name]]
+            play_device_music(device_name, horn_file, loop=False)
+
     elif device_name == "ESP32_HornBLE_2":
-        if data[0] == 252:  # 播放指令 (開始彎曲)
+        # 在 process_data 函數中修改 254 指令的處理部分：
+        if data[0] == 254:  # 播放指令 (開始彎曲)
             print(f"喇叭控制器: 偵測到彎曲開始, hornPlayed={hornPlayed}")
-
-            # 確保沒有其他音效正在播放
-            if not hornPlayed:
-                # 先徹底停止任何可能正在播放的音效
-                stop_device_audio(device_name)
+            current_horn_set[device_name] = "3"  # 設置為第一組
+            
+            # 重置標誌，強制播放
+            hornPlayed = False  # 將此標誌設為 False，確保音效會播放
+            
+            # 先徹底停止任何可能正在播放的音效
+            stop_device_audio(device_name)
+            
+            # 強制終止其他可能存在的播放線程
+            if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
+                device_stop_flags[device_name] = True
+                print("喇叭控制器: 等待先前的音效停止...")
+                device_audio_threads[device_name].join(timeout=0.3)  # 等待線程結束
+                device_audio_threads[device_name] = None  # 明確釋放線程引用
+            
+            # 確保標誌正確設置後再播放
+            device_stop_flags[device_name] = False
+            
+            # 選擇對應組別的 before 音效
+            horn_file = horn_audio_file_before[current_horn_set[device_name]]
+            print(f"喇叭控制器: 嘗試播放開始音效 {horn_file}")
+            
+            # 直接使用 pygame 播放
+            try:
+                if audio_mixer is None:
+                    initialize_audio_system()
                 
-                # 強制終止其他可能存在的播放線程
-                if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
-                    device_stop_flags[device_name] = True
-                    print("喇叭控制器: 等待先前的音效停止...")
-                    device_audio_threads[device_name].join(timeout=0.3)  # 等待線程結束
-                    device_audio_threads[device_name] = None  # 明確釋放線程引用
-                
-                # 確保標誌正確設置後再播放
-                device_stop_flags[device_name] = False
-                
-                print(f"喇叭控制器: 開始播放音效 {horn_audio_file_before}")
-                play_device_music(device_name, horn_audio_file_before, loop=False)
-                
-                # 標記已播放
+                sound = audio_mixer.Sound(horn_file)
+                channel = audio_mixer.Channel(0)  # 使用頻道0
+                channel.play(sound)
+                print("喇叭控制器: 已使用 pygame 播放開始音效")
                 hornPlayed = True
-                # 初始化最後的位置值
-                process_data.last_position = 0
-                # 重置模式切換狀態
-                horn_mode_switched = False
+            except Exception as e:
+                print(f"喇叭控制器: pygame 播放開始音效失敗 {e}")
+                # 如果 pygame 播放失敗，嘗試使用原始方法
+                success = play_device_music(device_name, horn_file, loop=False)
+                print(f"喇叭控制器: 使用原始方法播放結果: {success}")
+                hornPlayed = True
+            
+            # 初始化最後的位置值
+            process_data.last_position = 0
+            # 重置模式切換狀態
+            horn_mode_switched = False
                     
-        elif data[0] == 251:  # 停止指令 (停止彎曲)
+        elif data[0] == 253:  # 停止指令 (停止彎曲) - 使用第一組對應的 after
             print(f"喇叭控制器: 偵測到彎曲結束")
             
             # 設置停止標誌
@@ -1249,16 +1295,10 @@ def process_data(device_name, data):
                     print("喇叭控制器: 音效已成功停止")
                     break
 
-            # 無論如何，都清空音訊線程引用
-            device_audio_threads[device_name] = None
-            
-            # 重置所有狀態標誌
-            horn_mode_switched = False
-            hornPlayed = False
-            device_stop_flags[device_name] = False
-            
-            print("喇叭控制器: 已徹底重置所有音效和狀態")
-            play_device_music(device_name, horn_audio_file_after, loop=False)
+            # 播放對應組別的 after 音效
+            stop_device_audio(device_name)
+            horn_file = horn_audio_file_after[current_horn_set[device_name]]
+            play_device_music(device_name, horn_file, loop=False)
             
         else:
             position = data[0]  # 播放位置 (0-100)
@@ -1268,11 +1308,11 @@ def process_data(device_name, data):
             static_last_position = getattr(process_data, 'last_position', 0)
             
             # 如果現在位置比上一次增加了20以上，且還沒有切換過模式，且已經在播放音效
-            if position < static_last_position - 8 and not horn_mode_switched and hornPlayed:
+            if position < static_last_position - 8 and not horn_mode_switched[device_name] and hornPlayed:
                 # 確保目前的音效真的在播放
                 if device_audio_threads[device_name] and device_audio_threads[device_name].is_alive():
                     # 切換到 after 音效
-                    horn_mode_switched = True
+                    horn_mode_switched[device_name] = True
                     print("喇叭控制器: 偵測到彎曲程度增加超過20，切換到新音效")
                     # 停止當前播放並播放新音效
                     stop_device_audio(device_name)
@@ -1323,7 +1363,7 @@ def process_data(device_name, data):
                 
                 # 根據不同的音樂選擇不同的音效
                 if current_song == "1":
-                    sound_file = rdp_audio_files.get("RDP_3_before", sound_file)
+                    sound_file = rdp_audio_files.get("RDP_1_before", sound_file)
                 elif current_song == "2":
                     sound_file = rdp_audio_files.get("RDP_2_before", sound_file)
                 elif current_song == "3":
@@ -1351,6 +1391,9 @@ def process_data(device_name, data):
             elif(current_song == "3"):
                 if "city_1_after" in rdp_audio_files:
                     play_device_music(device_name, rdp_audio_files["city_2_after"], loop=False)
+            elif(current_song == "1"):
+                if "city_1_after" in rdp_audio_files:
+                    play_device_music(device_name, rdp_audio_files["RDP_1_after"], loop=False)
             else:
                 if "RDP_3_after" in rdp_audio_files:
                     play_device_music(device_name, rdp_audio_files["RDP_3_after"], loop=False)
