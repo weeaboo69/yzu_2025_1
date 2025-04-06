@@ -126,14 +126,14 @@ void loop() {
   
   // 定期監測感測器讀數，幫助調整閾值
   if (currentTime - lastMonitorTime >= MONITOR_INTERVAL) {
-    //Serial.print("感測器讀數: ");
-    //Serial.println(sensorValue);
-    //Serial.print("感測器2: ");
-    //Serial.println(sensorValue2);
+    Serial.print("感測器讀數: ");
+    Serial.println(sensorValue);
+    Serial.print("感測器2: ");
+    Serial.println(sensorValue2);
     Serial.print("感測器3: ");
     Serial.println(sensorValue_2);
-    Serial.print("感測器4: ");
-    Serial.println(sensorValue2_2);
+    //Serial.print("感測器4: ");
+    //Serial.println(sensorValue2_2);
     //Serial.print("感測器5: ");
     //Serial.println(sensorValue_3);
     //Serial.print("感測器6: ");
@@ -206,36 +206,6 @@ else if ((sensorValue_2 >= 3700 && sensorValue_2 <= 3900) && isBent2 && (current
   }
 }
 
-
-if ((sensorValue2_3 <= 4000 || sensorValue_3 <= 3750) && !isBent3 && (currentTime - lastBendStartTime > 800)) {
-  isBent3 = true;
-  hornPlayed = false;  // 重置播放標記
-  lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
-  Serial.println("偵測到3彎曲開始");
-  
-  // 發送彎曲開始訊號
-  if (deviceConnected) {
-    uint8_t startCommand = CMD_START_BEND_3;
-    pCharacteristic->setValue(&startCommand, 1);
-    pCharacteristic->notify();
-    Serial.println("發送3彎曲開始命令");
-    zxw++;
-  }
-}
-// 如果從彎曲變為未彎曲，且已經過了防抖動時間
-else if ((sensorValue2_3 >= 4090 && sensorValue_3 >=3900) && isBent3 && (currentTime - lastBendStartTime >600)) {
-  isBent3 = false;
-  Serial.println("偵測到3彎曲結束");
-  
-  // 發送彎曲結束訊號
-  if (deviceConnected) {
-    uint8_t endCommand = CMD_END_BEND_3;
-    pCharacteristic->setValue(&endCommand, 1);
-    pCharacteristic->notify();
-    Serial.println("發送3彎曲結束命令");
-    Serial.println(zxw);
-  }
-}
   // 在彎曲期間，每當值變化 200 就發送一次
   if (isBent && deviceConnected && currentTime - lastSendTime >= SEND_INTERVAL) {
     // 如果值與上次發送的值相差超過 200
