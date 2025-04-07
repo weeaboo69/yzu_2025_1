@@ -74,7 +74,7 @@ device_audio_channels = {
 
 current_horn_set = {
     "ESP32_HornBLE": "1",    # 默認使用第一組
-    "ESP32_HornBLE_2": "1"   # 默認使用第一組
+    "ESP32_HornBLE_2": "3"   # 默認使用第一組
 }
 
 # 裝置與適配器的映射關係
@@ -1301,7 +1301,7 @@ def process_data(device_name, data):
                     initialize_audio_system()
                 
                 sound = audio_mixer.Sound(horn_file)
-                channel = audio_mixer.Channel(0)  # 使用頻道0
+                channel = audio_mixer.Channel(1)  # 使用頻道0
                 channel.play(sound)
                 print("喇叭控制器: 已使用 pygame 播放開始音效")
                 hornPlayed = True
@@ -1339,7 +1339,6 @@ def process_data(device_name, data):
                     break
 
             # 播放對應組別的 after 音效
-            stop_device_audio(device_name)
             horn_file = horn_audio_file_after[current_horn_set[device_name]]
             play_device_music(device_name, horn_file, loop=False)
             

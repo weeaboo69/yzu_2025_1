@@ -146,11 +146,12 @@ void loop() {
   bool currentlyBent2 = (totalValue >= BEND_THRESHOLD2);
   
   // 如果從未彎曲變為彎曲
-if ((sensorValue2 <= 3900 || sensorValue <= 3600) && !isBent && (currentTime - lastBendStartTime > 800)) {
+if ((sensorValue2 <= 4050 || sensorValue <= 3600) && !isBent && (currentTime - lastBendStartTime > 800)) {
   isBent = true;
   hornPlayed = false;  // 重置播放標記
   lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
   Serial.println("偵測到彎曲開始");
+  zxw = 1;
   
   // 發送彎曲開始訊號
   if (deviceConnected) {
@@ -158,11 +159,11 @@ if ((sensorValue2 <= 3900 || sensorValue <= 3600) && !isBent && (currentTime - l
     pCharacteristic->setValue(&startCommand, 1);
     pCharacteristic->notify();
     Serial.println("發送彎曲開始命令");
-    zxw++;
   }
 }
+
 // 如果從彎曲變為未彎曲，且已經過了防抖動時間
-else if ((sensorValue2 >= 4000 && sensorValue >=3700) && isBent && (currentTime - lastBendStartTime >600)) {
+else if ((sensorValue2 >= 4095 && sensorValue >=3800) && isBent && (currentTime - lastBendStartTime >600)) {
   isBent = false;
   Serial.println("偵測到彎曲結束");
   

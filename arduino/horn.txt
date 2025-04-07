@@ -20,11 +20,11 @@ int sensorValue_3;
 int sensorValue2_3;
 
 
-const int SENSOR_PIN = 34;
+const int SENSOR_PIN = 34; //中
 const int SENSOR_PIN_2 = 35;
 
-const int SENSOR_PIN2 = 33;
-const int SENSOR_PIN2_2 = 25;
+const int SENSOR_PIN2 = 33;   //又
+const int SENSOR_PIN2_2 = 32;
 
 const int SENSOR_PIN3 = 26;
 const int SENSOR_PIN3_2 = 27;
@@ -146,7 +146,7 @@ void loop() {
   bool currentlyBent2 = (totalValue >= BEND_THRESHOLD2);
   
   // 如果從未彎曲變為彎曲
-if ((sensorValue2 <= 3900 || sensorValue <= 3800) && !isBent && (currentTime - lastBendStartTime > 800)) {
+if ((sensorValue2 <= 3800 || sensorValue <= 3850) && !isBent && (currentTime - lastBendStartTime > 800)) {
   isBent = true;
   hornPlayed = false;  // 重置播放標記
   lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
@@ -162,7 +162,7 @@ if ((sensorValue2 <= 3900 || sensorValue <= 3800) && !isBent && (currentTime - l
   }
 }
 // 如果從彎曲變為未彎曲，且已經過了防抖動時間
-else if ((sensorValue2 >= 4000 && sensorValue >=3900) && isBent && (currentTime - lastBendStartTime >600)) {
+else if ((sensorValue2 >= 3900 && sensorValue >=3950) && isBent && (currentTime - lastBendStartTime >600)) {
   isBent = false;
   Serial.println("偵測到彎曲結束");
   
@@ -175,8 +175,8 @@ else if ((sensorValue2 >= 4000 && sensorValue >=3900) && isBent && (currentTime 
     Serial.println(zxw);
   }
 }
-
-if ((sensorValue_2 <= 3600) && !isBent2 && (currentTime - lastBendStartTime > 800)) {
+//壓
+if ((sensorValue_2 <= 3500 || sensorValue2_2 <= 3800) && !isBent2 && (currentTime - lastBendStartTime > 800)) {
   isBent2 = true;
   hornPlayed = false;  // 重置播放標記
   lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
@@ -192,7 +192,7 @@ if ((sensorValue_2 <= 3600) && !isBent2 && (currentTime - lastBendStartTime > 80
   }
 }
 // 如果從彎曲變為未彎曲，且已經過了防抖動時間
-else if ((sensorValue_2 >= 3700) && isBent2 && (currentTime - lastBendStartTime >600)) {
+else if ((sensorValue_2 >= 3600 && sensorValue2_2 >= 3900) && isBent2 && (currentTime - lastBendStartTime >600)) {
   isBent2 = false;
   Serial.println("偵測到2彎曲結束");
   
