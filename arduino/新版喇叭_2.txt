@@ -1,0 +1,258 @@
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+// 定義 BLE 相關 UUID
+#define SERVICE_UUID        "180F" // 使用標準的電池服務 UUID
+#define CHARACTERISTIC_UUID "2A19" // 使用標準的電池等級特性 UUID
+
+// 感應器腳位及閾值定義
+int zxw = 0;
+int lastSentValue = 0;
+int sensorValue;
+int sensorValue2;
+
+const int SENSOR_PIN = 34;    // 第一根感測器
+const int SENSOR_PIN_2 = 35;  // 第二根感測器
+
+// 動態閾值相關變數
+int baselineValue1 = 0;       // 感測器基準值
+unsigned long lastCalibrationTime = 0;  // 上次校準時間
+const int CALIBRATION_INTERVAL = 200;  // 校準間隔(毫秒)，每10秒
+
+const int SEND_INTERVAL = 50;     // 藍牙發送間隔 (毫秒)
+const int MONITOR_INTERVAL = 500; // 監測數值間隔 (毫秒)
+
+const uint8_t CMD_START_BEND = 254;  // 開始彎曲命令
+const uint8_t CMD_END_BEND = 253;    // 結束彎曲命令
+unsigned long lastBendStartTime = 0;  // 記錄上次彎曲開始的時間
+
+unsigned long lastSendTime = 0;
+unsigned long lastMonitorTime = 0;
+
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+bool isBent = false;          // 是否正在彎曲狀態
+bool hornPlayed = false;      // 是否已經播放過聲音
+
+// 連接狀態回調
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      Serial.println("裝置已連接");
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      Serial.println("裝置已斷開連接");
+    }
+};
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("彎曲感測器音效控制程式已啟動 (BLE 模式) - 動態閾值版本 (兩感測器)");
+  
+  // 初始化 BLE
+  BLEDevice::init("ESP32_HornBLE_2");
+  
+  // 建立 BLE 服務器
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  
+  // 建立 BLE 服務
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  // 建立 BLE 特性
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+  
+  // 添加描述符
+  pCharacteristic->addDescriptor(new BLE2902());
+  
+  // 啟動服務
+  pService->start();
+  
+  // 啟動廣播
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // iPhone 連接參數
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+  
+  Serial.println("BLE 已啟動，等待連接...");
+  
+  // 在啟動時先進行初始校準，設定基準值
+  delay(1000); // 等待感測器穩定
+  
+  // 初始化基準值
+  for(int i=0; i<5; i++) { // 取5次平均值作為初始基準
+    sensorValue = analogRead(SENSOR_PIN);
+    sensorValue2 = analogRead(SENSOR_PIN_2);
+    baselineValue1 += (sensorValue + sensorValue2);
+    delay(100);
+  }
+  
+  baselineValue1 /= 5;
+  
+  Serial.print("初始基準值: ");
+  Serial.println(baselineValue1);
+}
+
+void loop() {
+  // 讀取感測器值
+  sensorValue = analogRead(SENSOR_PIN);
+  sensorValue2 = analogRead(SENSOR_PIN_2);
+  
+  int totalValue1 = sensorValue + sensorValue2;
+  
+  unsigned long currentTime = millis();
+  
+  // 定期重新校準基準值（只在未彎曲狀態下）
+  if (currentTime - lastCalibrationTime >= CALIBRATION_INTERVAL) {
+    // 檢查是否處於彎曲狀態
+    if (!isBent) {
+      // 計算當前的偏差
+      int deviation1 = abs(baselineValue1 - totalValue1);
+      
+      // 只有當偏差很小時才更新基準值（避免在正在彎曲時更新）
+      if (deviation1 < 50) {
+        // 平滑地更新基準值，使用80%舊值 + 20%新值
+        baselineValue1 = (baselineValue1 * 8 + totalValue1 * 2) / 10;
+      }
+    }
+    lastCalibrationTime = currentTime;
+  }
+  
+  // 定期監測感測器讀數
+  if (currentTime - lastMonitorTime >= MONITOR_INTERVAL) {
+    //Serial.print("感測器1讀數: ");
+    //Serial.println(sensorValue);
+    //Serial.print("感測器2讀數: ");
+    //Serial.println(sensorValue2);
+    //Serial.print("總值: ");
+    //Serial.println(totalValue1);
+    Serial.print("基準值: ");
+    Serial.println(baselineValue1);
+    Serial.print("偏差絕對值: ");
+    Serial.println(abs(baselineValue1 - totalValue1));
+    
+    lastMonitorTime = currentTime;
+  }
+  
+  // 使用偏差絕對值檢測彎曲狀態
+  int deviation1 = abs(baselineValue1 - totalValue1);  // 計算偏差的絕對值
+  
+  // 當偏差大於200且未處於彎曲狀態時，發送開始彎曲訊號
+  if ((deviation1 > 250) && !isBent && (currentTime - lastBendStartTime > 800)) {
+    isBent = true;
+    hornPlayed = false;  // 重置播放標記
+    lastBendStartTime = currentTime;  // 記錄彎曲開始的時間
+    Serial.println("偵測到彎曲開始");
+    Serial.print("偏差值: ");
+    Serial.println(deviation1);
+    zxw = 1;
+    
+    // 發送彎曲開始訊號
+    if (deviceConnected) {
+      uint8_t startCommand = CMD_START_BEND;
+      pCharacteristic->setValue(&startCommand, 1);
+      pCharacteristic->notify();
+      Serial.println("發送彎曲開始命令");
+    }
+  }
+  // 當偏差小於100且處於彎曲狀態時，發送停止彎曲訊號
+  else if ((deviation1 < 150) && isBent && (currentTime - lastBendStartTime > 600)) {
+    isBent = false;
+    Serial.println("偵測到彎曲結束");
+    Serial.print("偏差值: ");
+    Serial.println(deviation1);
+    
+    // 發送彎曲結束訊號
+    if (deviceConnected) {
+      uint8_t endCommand = CMD_END_BEND;
+      pCharacteristic->setValue(&endCommand, 1);
+      pCharacteristic->notify();
+      Serial.println("發送彎曲結束命令");
+      Serial.println(zxw);
+    }
+  }
+
+  // 在彎曲期間，每當值變化 200 就發送一次
+  if (isBent && deviceConnected && currentTime - lastSendTime >= SEND_INTERVAL) {
+    // 如果值與上次發送的值相差超過 200
+    if (abs(totalValue1 - lastSentValue) >= 200) {
+      // 使用偏差絕對值進行映射
+      int deviation = abs(baselineValue1 - totalValue1);
+      int playbackPosition = map(deviation, 0, 400, 0, 100);  // 偏差0到400映射為0-100
+      playbackPosition = constrain(playbackPosition, 0, 100);
+      
+      // 發送進度控制命令
+      uint8_t positionValue = (uint8_t)playbackPosition;
+      pCharacteristic->setValue(&positionValue, 1);
+      pCharacteristic->notify();
+      Serial.print("發送新的位置值: ");
+      Serial.println(positionValue);
+      
+      // 更新上次發送的值
+      lastSentValue = totalValue1;
+      lastSendTime = currentTime;
+    }
+  }
+  
+  // 有裝置連接時，發送數據
+  if (deviceConnected && currentTime - lastSendTime >= SEND_INTERVAL) {
+    // 如果正在彎曲且尚未播放聲音
+    if (isBent && !hornPlayed) {
+      // 發送播放指令 (用特定值如254表示播放觸發)
+      uint8_t playCommand = 254;
+      pCharacteristic->setValue(&playCommand, 1);
+      pCharacteristic->notify();
+      hornPlayed = true;  // 標記已播放
+      Serial.println("發送播放指令");
+    }
+    // 如果正在彎曲且已播放聲音，發送位置控制
+    else if (isBent && hornPlayed) {
+      // 使用偏差絕對值進行映射
+      int deviation = abs(baselineValue1 - totalValue1);
+      int playbackPosition = map(deviation, 0, 400, 0, 100);  // 偏差0到400映射為0-100
+      playbackPosition = constrain(playbackPosition, 0, 100);
+
+      // 添加閾值判斷，當值非常小時(如小於2)，直接設為0
+      if (playbackPosition < 2) {
+          playbackPosition = 0;
+      }
+      
+      // 發送進度控制命令
+      uint8_t positionValue = (uint8_t)playbackPosition;
+      pCharacteristic->setValue(&positionValue, 1);
+      pCharacteristic->notify();
+      Serial.println(positionValue);
+    }
+    
+    lastSendTime = currentTime;
+  }
+  
+  // 處理重新連接
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500); // 等待 BLE 堆疊準備好
+    pServer->startAdvertising(); // 重新開始廣播
+    Serial.println("開始重新廣播");
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  // 處理新連接
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  delay(5); // 短暫延遲
+}
